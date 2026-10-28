@@ -15,7 +15,7 @@ Drop a paper, a report, a folder of docs or a few links. Get a sharp **3–8 min
 [![ElevenLabs](https://img.shields.io/badge/voices-ElevenLabs%20v4-111)](https://elevenlabs.io)
 [![Claude](https://img.shields.io/badge/LLM-Claude%20Opus%205.5-d97757)](https://www.anthropic.com)
 
-[**Live demo**](https://evocast.vercel.app) · [**Download for Mac**](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases/latest) · [Architecture](docs/ARCHITECTURE.md) · [Research](docs/RESEARCH.md) · [简体中文](README.zh-CN.md)
+[**Try it free — no keys**](https://evocast.vercel.app) · [**Download for Mac**](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases/latest) · [Architecture](docs/ARCHITECTURE.md) · [Operations](docs/OPERATIONS.md) · [Research](docs/RESEARCH.md) · [简体中文](README.zh-CN.md)
 
 <br/>
 
@@ -101,9 +101,9 @@ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design notes and rese
 
 ## Quick start
 
-**Use it** — open the [live demo](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*.
+**Use it** — open [evocast.vercel.app](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*.
 
-**Deploy your own** — one click, no environment variables needed (everyone brings their own keys):
+**Deploy your own** — one click, no environment variables needed (everyone brings their own keys). Add Neon from the Vercel Marketplace to turn on analytics, the admin console and the free trial; [Operations](docs/OPERATIONS.md) covers costs and limits.
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FLittleA-Agentic-RL-Harness%2Fevocast&project-name=evocast&repository-name=evocast)
 
@@ -112,7 +112,7 @@ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design notes and rese
 ```bash
 git clone https://github.com/LittleA-Agentic-RL-Harness/evocast && cd evocast
 npm install
-npm run dev            # http://localhost:3000 — demo mode works without keys
+npm run dev            # http://localhost:3000 — your keys, or the offline demo without them
 ```
 
 **Mac app** — download the `.dmg` from [Releases](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases/latest) (Apple Silicon). It runs the whole app *and its API* locally. Unsigned build: open once, then *System Settings → Privacy & Security → Open Anyway*. Build it yourself with `npm --prefix desktop install && npm run desktop:build`.

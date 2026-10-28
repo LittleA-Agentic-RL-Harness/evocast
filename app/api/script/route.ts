@@ -4,7 +4,7 @@ import { errorResponse, resolveLLM } from "@/lib/server/keys";
 import type { Brief, EpisodeRequest, TestCase } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 300;
 
 /** Stage 2: brief → two-host script for one audience/style/language (+ verify/revise per harness). */
 export async function POST(req: Request) {

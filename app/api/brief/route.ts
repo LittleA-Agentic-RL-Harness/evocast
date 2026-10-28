@@ -4,7 +4,7 @@ import { errorResponse, isTrial, resolveLLM } from "@/lib/server/keys";
 import { TRIAL_MAX_CHARS } from "@/lib/server/trial";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 300;
 
 /** Stage 1: document → source-grounded brief + fixed verification tests. */
 export async function POST(req: Request) {

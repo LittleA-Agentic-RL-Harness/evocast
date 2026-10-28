@@ -6,7 +6,7 @@ import type { EpisodeTrace, PlannerPriority } from "@/lib/harness/prompts";
 import type { Brief, EpisodeRequest, TestCase } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 300;
 
 type Body =
   | { action: "analyze"; harness: unknown; traces: EpisodeTrace[]; uiLang?: "zh" | "en" }

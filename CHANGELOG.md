@@ -4,7 +4,8 @@
 
 - **Real from the first click**: visitors without keys get a free trial that makes real episodes, with Claude Opus 5.5 and ElevenLabs Eleven v4 running on Vercel AI Gateway under the deployment's own identity. Every call is metered at its real cost and capped per visitor and per site each day; past the cap, people are asked for their own keys. The silent demo remains only where no trial is offered.
 - **Admin shows real spend**: trial spend today against the cap, the live AI Gateway balance, model vs. voice cost; generation is split by compute (trial, own keys, demo); the funnel counts trial starts.
-- Brief, script and evolution functions may run up to 800 s (Fluid compute).
+- **Sturdier voices on the trial**: transient Gateway errors are retried per line, a failed chunk is retried once, and a line that is only a delivery tag becomes a short pause.
+- **Ready for the public**: an [operations guide](docs/OPERATIONS.md) for Vercel, AI Gateway, ElevenLabs and Neon (costs measured in production, limits, runbook); screenshots and the walkthrough now show real episodes; CI runs on Node 22 and 24; TypeScript 7.
 
 ## 0.3.0 — 2026-10-29
 

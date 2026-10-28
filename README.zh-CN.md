@@ -12,7 +12,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-6155f5)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/LittleA-Agentic-RL-Harness/evocast?color=bf5af2)](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases)
 
-[**在线体验**](https://evocast.vercel.app) · [**下载 Mac 版**](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases/latest) · [架构](docs/ARCHITECTURE.md) · [调研](docs/RESEARCH.md) · [English](README.md)
+[**免费试用，不需要 Key**](https://evocast.vercel.app) · [**下载 Mac 版**](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases/latest) · [架构](docs/ARCHITECTURE.md) · [运营](docs/OPERATIONS.zh-CN.md) · [调研](docs/RESEARCH.md) · [English](README.md)
 
 <br/>
 
@@ -70,8 +70,8 @@
 
 ## 快速开始
 
-- **直接用**：打开[在线体验](https://evocast.vercel.app)，不填 Key 也能免费试用，或者填上自己的两把钥匙。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。
-- **一键部署自己的**：[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FLittleA-Agentic-RL-Harness%2Fevocast&project-name=evocast&repository-name=evocast)
+- **直接用**：打开 [evocast.vercel.app](https://evocast.vercel.app)，不填 Key 也能免费试用，或者填上自己的两把钥匙。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。
+- **一键部署自己的**：[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FLittleA-Agentic-RL-Harness%2Fevocast&project-name=evocast&repository-name=evocast)。不需要任何环境变量；在 Vercel Marketplace 加上 Neon，就会打开埋点、管理后台和免费试用，费用和上限见[运营文档](docs/OPERATIONS.zh-CN.md)。
 - **本地运行**：
 
   ```bash

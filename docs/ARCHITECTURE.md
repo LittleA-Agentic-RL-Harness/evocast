@@ -114,7 +114,7 @@ flowchart TB
 
 | Constraint | Design |
 |---|---|
-| Vercel: ≤800 s per function (Pro, Fluid compute), ≤4.5 MB bodies | PDFs parsed in the browser; TTS chunked to ≤2.5 min of audio; evolution orchestrated step-by-step from the client |
+| Vercel: ≤300 s per function on every plan (Hobby's maximum), ≤4.5 MB bodies | PDFs parsed in the browser; TTS chunked to ≤2.5 min of audio; evolution orchestrated step-by-step from the client |
 | Text-to-Dialogue: ≤2,000 chars / request | chunks ≤1,800 chars; `previous_text`/`future_text` across chunks |
 | Mandarin ≈ 4 chars/s | Chinese chunks ≈ 625 chars (keeps responses under 4.5 MB) |
 | Mac app needs the API locally | Electron `utilityProcess` runs the Next standalone server on a fixed port (stable IndexedDB origin) |
