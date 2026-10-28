@@ -69,13 +69,38 @@ test("gateway speech: one request per line, exact cumulative starts", async () =
       { text: "[laughs] Glad to be here.", voice_id: "b" },
       { text: "Let's dig into the paper.", voice_id: "a" },
     ];
+    let failOnce = true;
+    const inner = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      if (failOnce) {
+        failOnce = false;
+        return new Response(JSON.stringify({ error: { message: "Conflict" } }), { status: 409 });
+      }
+      return inner(url, init);
+    }) as typeof fetch;
     const out = await gatewaySpeechTimed("token", lines, "eleven_v4", "en", { previous: "Earlier we said hi." });
-    assert.equal(seen.length, 3);
+    assert.equal(seen.length, 3, "a transient 409 is retried, not surfaced");
     assert.ok(seen.every((s) => s.model === "elevenlabs/eleven-v4" && s.body.outputFormat === "mp3" && s.body.language === "en"));
     assert.equal((seen.find((s) => s.body.voice === "a")!.body.providerOptions as { elevenlabs: { previousText?: string } }).elevenlabs.previousText !== undefined, true);
     assert.equal(out.starts[0], 0);
     assert.ok(out.starts[1] > 0 && out.starts[2] > out.starts[1]);
     assert.ok(Math.abs(mp3Duration(out.audio) - (out.starts[2] + mp3Duration(silentMp3(lines[2].text.length / 10)))) < 0.1);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("gateway speech: a tag-only line becomes a short pause instead of a rejected request", async () => {
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls++;
+    return new Response(JSON.stringify({ audio: Buffer.from(silentMp3(1)).toString("base64") }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const out = await gatewaySpeechTimed("token", [{ text: "[laughs]", voice_id: "a" }, { text: "That's the trick.", voice_id: "b" }], "eleven_v4", "en");
+    assert.equal(calls, 1);
+    assert.ok(out.starts[1] > 0.3 && out.starts[1] < 0.5);
   } finally {
     globalThis.fetch = real;
   }

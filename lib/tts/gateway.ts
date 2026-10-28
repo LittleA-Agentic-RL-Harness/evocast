@@ -1,6 +1,6 @@
 import { GATEWAY_URL } from "../server/trial";
 import { modelInfo } from "./models";
-import { mp3Duration, stripMp3Headers } from "./mp3";
+import { mp3Duration, silentMp3, stripMp3Headers } from "./mp3";
 import { sanitizeTags, stripTags } from "./tags";
 import { ElevenError, type DialogueInput, type TimedAudio } from "./elevenlabs";
 import type { Lang } from "../types";
@@ -9,8 +9,10 @@ import type { Lang } from "../types";
 // voice per request, so each line is its own request: starts are exact, and lines run in parallel.
 
 const PARALLEL = 4;
+// Transient answers seen from the gateway under load; a short backoff clears them.
+const RETRY = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 
-async function speech(token: string, model: string, body: Record<string, unknown>): Promise<Uint8Array> {
+async function speech(token: string, model: string, body: Record<string, unknown>, attempt = 0): Promise<Uint8Array> {
   const res = await fetch(`${GATEWAY_URL}/v4/ai/speech-model`, {
     method: "POST",
     headers: {
@@ -23,6 +25,10 @@ async function speech(token: string, model: string, body: Record<string, unknown
     body: JSON.stringify({ outputFormat: "mp3", ...body }),
   });
   const j = (await res.json().catch(() => ({}))) as { audio?: string; error?: { message?: string } };
+  if (RETRY.has(res.status) && attempt < 2) {
+    await new Promise((r) => setTimeout(r, 700 * 2 ** attempt + Math.random() * 300));
+    return speech(token, model, body, attempt + 1);
+  }
   if (!res.ok || !j.audio) throw new ElevenError(`Speech via AI Gateway failed (${res.status}): ${j.error?.message ?? "no audio"}`, res.status === 402 || res.status === 429 ? res.status : 502);
   return stripMp3Headers(Uint8Array.from(Buffer.from(j.audio, "base64")));
 }
@@ -37,6 +43,11 @@ export async function gatewaySpeechTimed(token: string, inputs: DialogueInput[],
     Array.from({ length: Math.min(PARALLEL, inputs.length) }, async () => {
       while (next < inputs.length) {
         const i = next++;
+        // A line that is only a delivery tag ("[laughs]") has nothing to say; the gateway rejects it.
+        if (!stripTags(texts[i]).trim()) {
+          parts[i] = silentMp3(0.4);
+          continue;
+        }
         const previous = stripTags(i ? inputs[i - 1].text : (context.previous ?? "")).slice(-100);
         const following = stripTags(i < inputs.length - 1 ? inputs[i + 1].text : (context.next ?? "")).slice(0, 100);
         parts[i] = await speech(token, info.gateway!, {

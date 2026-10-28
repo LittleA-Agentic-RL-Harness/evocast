@@ -8,7 +8,7 @@ import { ttsUsd } from "../harness/cost";
 import { chunkCap, chunkScript } from "../tts/chunk";
 import { concatMp3, mp3Duration, mp3Format, stripMp3Headers } from "../tts/mp3";
 import { modelInfo } from "../tts/models";
-import { keyHeaders, postAudio, postJSON } from "./api";
+import { ApiError, keyHeaders, postAudio, postJSON } from "./api";
 import { idb } from "./store";
 import { getActive, getHarness, getProfile, newId, saveAudio, saveEpisode, saveSource, type Settings } from "./store";
 
@@ -95,7 +95,9 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
         previous: chunks[ci - 1]?.lines.map((l) => l.text).join(" ").slice(-100),
         next: chunks[ci + 1]?.lines.map((l) => l.text).join(" ").slice(0, 100),
       };
-      const r = await postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk.lines, voices: voiceIds, model: ttsModel, lang, context }, headers, signal);
+      const voice = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk.lines, voices: voiceIds, model: ttsModel, lang, context }, headers, signal);
+      // One retry per chunk: a transient provider error shouldn't throw away the script already paid for.
+      const r = await voice().catch((e) => (signal?.aborted || (e instanceof ApiError && e.code?.startsWith("trial")) ? Promise.reject(e) : voice()));
       const bytes = stripMp3Headers(Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0)));
       if (ci === 0 && sting && sameFormat(sting, bytes)) {
         parts.push(stripMp3Headers(sting));
