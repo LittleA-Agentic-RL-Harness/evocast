@@ -17,8 +17,8 @@ import { resolveVoices } from "../lib/harness/styles";
 import { ttsUsd } from "../lib/harness/cost";
 import { DEFAULT_ANTHROPIC_MODEL, type LLMConfig } from "../lib/llm";
 import { makeBrief, runScriptStage } from "../lib/server/pipeline";
-import { cleanDocument } from "../lib/ingest/clean";
-import { fetchSource, pdfToText } from "../lib/ingest/url";
+import { fetchSource } from "../lib/ingest/url";
+import { combine, extractFile, type SourceDoc } from "../lib/ingest/extract";
 import { chunkCap, chunkScript } from "../lib/tts/chunk";
 import { concatMp3, mp3Duration, silentMp3 } from "../lib/tts/mp3";
 import { TTS_MODEL_INFO, TTS_MODELS, type TtsModel } from "../lib/tts/models";
@@ -57,15 +57,13 @@ if (!demo && !elKey) throw new Error("Set ELEVENLABS_API_KEY in .env.local, or p
 const t0 = Date.now();
 const log = (m: string) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`);
 
+/** --url and --file both take comma-separated lists; several sources become one collection. */
 async function loadSource(): Promise<{ name: string; text: string }> {
-  if (opt.url) {
-    const s = await fetchSource(opt.url);
-    return { name: s.name, text: cleanDocument(s.text).text };
-  }
-  if (!opt.file) throw new Error("Pass --file <pdf|txt|md> or --url <link>.");
-  const buf = readFileSync(opt.file);
-  const raw = /\.pdf$/i.test(opt.file) ? (await pdfToText(new Uint8Array(buf))).text : buf.toString("utf8");
-  return { name: opt.file.split("/").pop()!.replace(/\.\w+$/, ""), text: cleanDocument(raw).text };
+  const docs: SourceDoc[] = [];
+  for (const u of (opt.url ?? "").split(",").filter(Boolean)) docs.push(...(await fetchSource(u)));
+  for (const f of (opt.file ?? "").split(",").filter(Boolean)) docs.push(...(await extractFile(f.split("/").pop()!, new Uint8Array(readFileSync(f)))));
+  if (!docs.length) throw new Error("Pass --file <pdf|md|html|docx|pptx|epub|zip,...> or --url <link,...>.");
+  return combine(docs);
 }
 
 const source = await loadSource();

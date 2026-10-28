@@ -118,3 +118,18 @@ flowchart TB
 | Text-to-Dialogue: ≤2,000 chars / request | chunks ≤1,800 chars; `previous_text`/`future_text` across chunks |
 | Mandarin ≈ 4 chars/s | Chinese chunks ≈ 625 chars (keeps responses under 4.5 MB) |
 | Mac app needs the API locally | Electron `utilityProcess` runs the Next standalone server on a fixed port (stable IndexedDB origin) |
+
+## Sources and analytics
+
+```mermaid
+flowchart LR
+  F["Files · folders · ZIP<br/>(parsed in the browser)"] --> X["lib/ingest/extract.ts<br/>PDF · MD · HTML · DOCX · PPTX · EPUB…"]
+  L["Links"] --> I["/api/ingest<br/>SSRF-guarded fetch"] --> X
+  X --> C["combine(): one source,<br/>a heading per document"]
+  U["Every screen & click"] --> T["lib/client/track.ts<br/>batched beacon"] --> E["/api/e<br/>validate · enrich · after()"] --> P[("Postgres<br/>events")]
+  P --> A["/admin<br/>funnel · sources · SQL"]
+```
+
+- **Ingest** is one isomorphic module: the browser uses it for dropped files (no upload, no size limit), the server for links. Archives expand; several documents are combined under a water‑filled character budget that stays below Vercel's 4.5 MB request limit.
+- **Analytics** is one append‑only `events` table (BRIN on time, btrees on name and visitor), created on first write. The collector answers `204` immediately and writes with `after()`. Every dashboard number is a plain SQL query, so anything on the dashboard can be re‑derived in the read‑only SQL console. A daily cron purges raw events older than `ANALYTICS_RETENTION_DAYS`.
+- **Admin** runs on its own host when `ADMIN_HOST` is set (`proxy.ts` maps it to `/admin` and hides `/admin` elsewhere), behind `ADMIN_PASSWORD` and a signed HttpOnly cookie.

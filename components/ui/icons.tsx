@@ -149,3 +149,15 @@ export const More = ({ size, ...p }: P) => (
     <circle cx="18" cy="12" r="1.6" />
   </svg>
 );
+export const Refresh = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" />
+    <path d="M19.5 4.5v4h-4" />
+  </svg>
+);
+export const Exit = ({ size, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <path d="M14 4.5H7a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h7" />
+    <path d="M11 12h9M17 8.5l3.5 3.5-3.5 3.5" />
+  </svg>
+);

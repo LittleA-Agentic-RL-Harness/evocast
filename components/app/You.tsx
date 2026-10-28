@@ -13,6 +13,7 @@ import { modelInfo } from "@/lib/tts/models";
 import { estimateEpochUsd, evolveInterface, runEpoch } from "@/lib/client/evolution";
 import { getActive, getEvolutionLog, listHarnesses, saveProfile, setActive, type ActiveSet, type EvolutionLogEntry, type HarnessRecord } from "@/lib/client/store";
 import { downloadBlob } from "@/lib/client/pipeline";
+import { track } from "@/lib/client/track";
 
 // ------------------------------------------------------------------ jigsaw geometry
 
@@ -134,6 +135,7 @@ export default function You() {
     setLearning(true);
     setLearnLog([]);
     try {
+      track("evolve", { kind: "interface" });
       await evolveInterface(settings, (l) => setLearnLog((x) => [...x, l]), undefined, episodes);
       await refresh();
     } catch (e) {
@@ -261,6 +263,7 @@ function Engine() {
     const ctrl = new AbortController();
     abort.current = ctrl;
     try {
+      track("evolve", { kind: "content", breadth, scope });
       await runEpoch({ breadth, valSize, scope, spread, settings, signal: ctrl.signal, onLog: (l) => setLog((x) => [...x, l]) });
       await load();
       await refresh();

@@ -6,7 +6,7 @@
 
 ### 会自我进化的 AI 原生播客
 
-丢给它一篇 60 页的论文、研报或一个链接，它会为**你**写一期 **3–8 分钟的中英双人播客**。写稿用的 harness 还会**自己变得更好**。
+丢给它论文、研报、一整个文件夹的资料或几个链接，它会为**你**写一期 **3–8 分钟的中英双人播客**。写稿用的 harness 还会**自己变得更好**。
 
 [![CI](https://github.com/LittleA-Agentic-RL-Harness/evocast/actions/workflows/ci.yml/badge.svg)](https://github.com/LittleA-Agentic-RL-Harness/evocast/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-6155f5)](LICENSE)
@@ -39,6 +39,7 @@
 | | Evocast | NotebookLM | ElevenLabs GenFM | Podcastfy / open-notebook |
 |---|:-:|:-:|:-:|:-:|
 | 开源、可自部署、自带 Key | ✅ | — | — | ✅ |
+| 任意来源：PDF、Markdown、网页、Word、PPT、EPUB、ZIP、文件夹、链接 | ✅ 本机解析 | ✅ | ✅ | ✅ |
 | 同一来源生成多个受众版本 | ✅ 5 类 | 只能写提示词 | 只能写提示词 | 有配置档 |
 | 严格时长 + 要点覆盖测试 | ✅ | — | 时长档位 | — |
 | 基于原文固定测试的事实校验 | ✅ | — | — | — |
@@ -90,7 +91,27 @@
 | **大模型** | 读懂原文、写稿、校验、进化 | 支持 Anthropic（默认 **Claude Opus 5.5**，实时列出你可用的最新模型），以及 DeepSeek、通义、Kimi、GLM、OpenRouter、Gemini 等 OpenAI 兼容接口 |
 | **ElevenLabs** | 声音 | 读取你的套餐和额度，自动使用最新的对话语音模型（目前是 **Eleven v4**）。通过 API 使用声音库声音需要付费套餐 |
 
-Key 只保存在你的设备上，服务端不存储、不记录，也没有任何遥测。
+Key 只保存在你的设备上，服务端不存储、不记录。
+
+## 什么都能导入
+
+| 来源 | 方式 |
+|---|---|
+| **文件** | PDF、Markdown、网页、Word、PPT（含演讲者备注）、EPUB、Notebook、字幕、代码、CSV/JSON。可以一次拖多个、拖整个**文件夹**或 **ZIP**，合并成一个来源，每个文件一个小标题。全部在本机解析，大小只受内存限制 |
+| **链接** | 一次粘贴一个或多个：arXiv（读取真实标题）、任意文章（包括公众号）、PDF、GitHub 仓库和文件、公开的 Google 文档/幻灯片/表格 |
+| **Claude Artifacts、Notion、飞书** | 它们的分享页在浏览器里渲染，任何服务器都读不到正文。复制内容后粘贴（会保留标题和列表），或把导出的 `.md` / `.html` / `.zip` 拖进来 |
+
+## 埋点与管理后台（给部署者）
+
+连上任意 Postgres（Vercel → Storage → **Neon**，免费档即可），再设置 `ADMIN_PASSWORD`。每个页面、每次点击、导入和收听都会变成匿名的第一方事件，**`/admin`**（也可以通过 `ADMIN_HOST` 放在独立域名，比如 `admin.example.com`）里可以看到：
+
+- **概览**：访客、会话、生成过节目的人、节目数和制作分钟、听完率，都和上一周期对比。
+- **漏斗**：访问 → 设好钥匙或演示 → 导入 → 点击生成 → 节目生成 → 开始收听 → 听完 75%，每一步的流失，以及到第一期节目的中位时间。
+- **来源**：完整的来源网址、`utm_*` 推广活动和落地页，各自的转化率；点任意来源，整个看板只看这部分人。
+- **导入、点击、生成、收听、访客画像、前端报错**，以及实时事件流。
+- **自助分析**：对 `events` 表的只读 SQL，内置留存、单个访客路径等查询，支持导出 CSV / NDJSON。
+
+没连数据库就什么都不记录；具体记录和不记录哪些内容，见 [SECURITY.md](SECURITY.md)。
 
 ## 许可证与致谢
 

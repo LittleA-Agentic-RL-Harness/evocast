@@ -9,6 +9,7 @@ import { Check, ChevronDown, Key } from "../ui/icons";
 import { AMBIGUOUS, providerById } from "@/lib/llm/providers";
 import { getProfile, saveProfile, type Settings } from "@/lib/client/store";
 import { modelInfo } from "@/lib/tts/models";
+import { track } from "@/lib/client/track";
 
 interface LLMResult {
   ok: boolean;
@@ -51,7 +52,11 @@ export default function Onboarding() {
   const [draft, setDraft] = useState<Settings>(settings);
   const [name, setName] = useState<string | null>(null);
 
+  useEffect(() => track("onboard_step", { step }), [step]);
+
   const finish = async (s: Settings) => {
+    const demo = s.keys.llmProvider === "mock";
+    track(demo ? "demo_start" : "keys_saved", demo ? {} : { llm: s.keys.llmProviderName ?? s.keys.llmProvider, tts: s.keys.elevenlabsKey ? (s.keys.elevenlabsTier ?? "yes") : "none" });
     if (name) await saveProfile({ ...(await getProfile()), name });
     update({ ...s, onboarded: true });
     await refresh();

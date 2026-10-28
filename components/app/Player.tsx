@@ -16,6 +16,7 @@ import { SEEDS } from "@/lib/harness/genome";
 import { stripTags } from "@/lib/tts/tags";
 import { deleteEpisode, getAudio, getHarness, getProfile, saveEpisode, saveProfile } from "@/lib/client/store";
 import { downloadBlob, slug, transcriptMarkdown } from "@/lib/client/pipeline";
+import { track } from "@/lib/client/track";
 
 /** Start time of every line: exact (from ElevenLabs timestamps) when stored, else proportional to text length. */
 export function lineStarts(e: Episode, duration: number): number[] {
@@ -36,7 +37,7 @@ export function MiniPlayer() {
   return (
     <AnimatePresence>
       {e && !player.sheet && (
-        <motion.div className="mini" initial={{ y: 89, x: "-50%", opacity: 0 }} animate={{ y: 0, x: "-50%", opacity: 1 }} exit={{ y: 89, x: "-50%", opacity: 0 }} transition={spring}>
+        <motion.div className="mini" data-private initial={{ y: 89, x: "-50%", opacity: 0 }} animate={{ y: 0, x: "-50%", opacity: 1 }} exit={{ y: 89, x: "-50%", opacity: 0 }} transition={spring}>
           <span className="mini-progress" style={{ width: `${player.duration ? (player.time / player.duration) * 100 : 0}%` }} />
           <button className="mini-art" onClick={() => setSheet(true)} aria-label={T("展开播放器", "Open player")} style={{ border: 0, padding: 0 }}>
             <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
@@ -147,7 +148,7 @@ export function NowPlaying() {
 
   return (
     <Sheet open={player.sheet} onClose={() => setSheet(false)} label={T("正在播放", "Now playing")}>
-      <div className="sheet-body">
+      <div className="sheet-body" data-private>
         <div className="spread" style={{ marginBottom: 13 }}>
           <span className="eyebrow">{T("正在播放", "Now playing")}</span>
           <div className="row">
@@ -161,8 +162,8 @@ export function NowPlaying() {
             >
               {(close) => (
                 <>
-                  <MenuItem title={T("下载 MP3", "Download MP3")} onSelect={async () => { const b = await getAudio(e.id); if (b) downloadBlob(b, `${slug(e.title)}.mp3`); close(); }} />
-                  <MenuItem title={T("下载文字稿（.md）", "Download transcript (.md)")} onSelect={() => { downloadBlob(new Blob([transcriptMarkdown(e)], { type: "text/markdown" }), `${slug(e.title)}.md`); close(); }} />
+                  <MenuItem title={T("下载 MP3", "Download MP3")} onSelect={async () => { const b = await getAudio(e.id); if (b) downloadBlob(b, `${slug(e.title)}.mp3`); track("download", { format: "mp3" }); close(); }} />
+                  <MenuItem title={T("下载文字稿（.md）", "Download transcript (.md)")} onSelect={() => { downloadBlob(new Blob([transcriptMarkdown(e)], { type: "text/markdown" }), `${slug(e.title)}.md`); track("download", { format: "md" }); close(); }} />
                   <div className="divider" style={{ margin: "4px 6px" }} />
                   <MenuItem title={<span style={{ color: "var(--red)" }}>{T("删除这一期", "Delete episode")}</span>} onSelect={async () => { close(); if (confirm(T("删除这一期？", "Delete this episode?"))) { stop(); await deleteEpisode(e.id); await refresh(); } }} />
                 </>
@@ -205,10 +206,10 @@ export function NowPlaying() {
               <div className="spread">
                 <span className="callout secondary">{T("这期怎么样？", "How was it?")}</span>
                 <div className="row" style={{ gap: 4 }}>
-                  <button className={`icon-btn ${fb.rating === 1 ? "on" : ""}`} onClick={() => persist({ ...fb, rating: fb.rating === 1 ? 0 : 1 })} aria-label="like">
+                  <button className={`icon-btn ${fb.rating === 1 ? "on" : ""}`} onClick={() => { persist({ ...fb, rating: fb.rating === 1 ? 0 : 1 }); if (fb.rating !== 1) track("feedback", { rating: "up" }); }} aria-label="like">
                     <ThumbUp size={17} />
                   </button>
-                  <button className={`icon-btn ${fb.rating === -1 ? "on" : ""}`} onClick={() => persist({ ...fb, rating: fb.rating === -1 ? 0 : -1 })} aria-label="dislike">
+                  <button className={`icon-btn ${fb.rating === -1 ? "on" : ""}`} onClick={() => { persist({ ...fb, rating: fb.rating === -1 ? 0 : -1 }); if (fb.rating !== -1) track("feedback", { rating: "down" }); }} aria-label="dislike">
                     <ThumbDown size={17} />
                   </button>
                 </div>

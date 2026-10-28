@@ -48,7 +48,7 @@ export default function Listen() {
           const pct = e.feedback?.listenedPct ?? 0;
           return (
             <Reveal key={e.id} i={i}>
-              <button className="ep-card" onClick={() => play(e, true)} aria-label={e.title}>
+              <button className="ep-card" data-track="episode" data-private onClick={() => play(e, true)} aria-label={e.title}>
                 <div className="ep-art">
                   <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
                   <span className="ep-play" style={current && player.playing ? { opacity: 1, transform: "none" } : undefined}>
