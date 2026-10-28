@@ -61,6 +61,8 @@ Model cost is mostly reading the source, and trial sources are cut at 100k chara
 2. **Whole site.** `TRIAL_DAILY_USD` (default $5 a day) works out to roughly 12–19 trial episodes a day.
 3. **Gateway project budget.** Set it slightly above the site cap, refreshing daily (the official deployment uses $6), as a backstop in case metering is ever wrong. It applies only to this project's OIDC requests. When it is spent, the Gateway answers `402`, and visitors see the same "today's trial is full" message.
 
+Local runs with a token from `vercel env pull` spend the same project budget. Recapturing the README's screenshots, for example, took about $5, including one evolution run. Do that kind of work early in the UTC day, or raise the budget for it.
+
 Credits are prepaid. At a full $5 site cap, the trial costs about $150 a month. Turn on Gateway **auto top‑up**, or the trial stops when the balance does. The admin's **Trial compute** card shows today's spend against the cap and the live balance.
 
 **Speech through the Gateway.**
