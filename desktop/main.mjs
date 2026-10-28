@@ -4,7 +4,7 @@
 import { app, BrowserWindow, Menu, shell, utilityProcess } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import net from "node:net";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -38,11 +38,29 @@ async function waitFor(url, ms = 30000) {
   throw new Error("The local server did not start.");
 }
 
+/**
+ * Next writes caches next to its build at runtime. Writing inside the signed .app would
+ * break its code signature ("damaged" app), so packaged builds run a private copy of the
+ * server from Application Support — copied once per build, old copies removed.
+ */
+function serverDir() {
+  const bundled = app.isPackaged ? join(process.resourcesPath, "server") : join(here, "..", ".next", "standalone");
+  if (!existsSync(join(bundled, "server.js"))) throw new Error(`Missing ${join(bundled, "server.js")} — run "npm run desktop:prepare" first.`);
+  if (!app.isPackaged) return bundled;
+  const root = app.getPath("userData");
+  const name = `server-${app.getVersion()}-${Math.floor(statSync(join(bundled, "server.js")).mtimeMs)}`;
+  const dest = join(root, name);
+  if (!existsSync(join(dest, "server.js"))) {
+    for (const d of existsSync(root) ? readdirSync(root) : []) if (d.startsWith("server-") && d !== name) rmSync(join(root, d), { recursive: true, force: true });
+    cpSync(bundled, dest, { recursive: true });
+  }
+  return dest;
+}
+
 async function startServer() {
   let port = PORTS[PORTS.length - 1];
   for (const p of PORTS) if (await isFree(p)) { port = p; break; }
-  const dir = app.isPackaged ? join(process.resourcesPath, "server") : join(here, "..", ".next", "standalone");
-  if (!existsSync(join(dir, "server.js"))) throw new Error(`Missing ${join(dir, "server.js")} — run "npm run desktop:prepare" first.`);
+  const dir = serverDir();
   server = utilityProcess.fork(join(dir, "server.js"), [], {
     cwd: dir,
     stdio: "pipe",
