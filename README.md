@@ -6,7 +6,7 @@
 
 ### AI‑native podcasts that evolve with you.
 
-Drop a 60‑page paper, report or link. Get a sharp **3–8 minute, two‑host episode** in **English or Chinese**, written for *you* — then watch the harness that wrote it **improve itself**.
+Drop a paper, a report, a folder of docs or a few links. Get a sharp **3–8 minute, two‑host episode** in **English or Chinese**, written for *you* — then watch the harness that wrote it **improve itself**.
 
 [![CI](https://github.com/LittleA-Agentic-RL-Harness/evocast/actions/workflows/ci.yml/badge.svg)](https://github.com/LittleA-Agentic-RL-Harness/evocast/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-6155f5)](LICENSE)
@@ -36,6 +36,7 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 | | Evocast | NotebookLM Audio | ElevenLabs GenFM | Podcastfy / open‑notebook |
 |---|:-:|:-:|:-:|:-:|
 | Open source, self‑host, bring your own keys | ✅ | — | — | ✅ |
+| Any source: PDF, Markdown, HTML, Word, PowerPoint, EPUB, ZIP, folders, links | ✅ parsed on device | ✅ | ✅ | ✅ |
 | Persona‑specific versions of one source | ✅ 5 personas | prompt only | prompt only | profiles |
 | Hard length budget (3–8 min) + coverage tests | ✅ | — | duration scale | — |
 | Fact‑checking against fixed, source‑derived tests | ✅ | — | — | — |
@@ -131,7 +132,27 @@ npm run podcast -- --file report.pdf --harness my-evolved-harness.json
 | **Model** | reads, writes, grades, evolves | Anthropic (default **Claude Opus 5.5**, newest models listed live) or any OpenAI‑compatible API — DeepSeek, Qwen, Kimi, GLM, OpenRouter, Gemini. Detected by key prefix; ambiguous `sk-…` keys ask once. |
 | **ElevenLabs** | voices | Reads your plan, quota and models; uses the newest dialogue model (**Eleven v4** today, future `eleven_vN` automatically). Library voices via API need a paid plan. |
 
-Keys stay on your device and are sent per request to stateless routes that forward them to the provider. No telemetry. See [SECURITY.md](SECURITY.md).
+Keys stay on your device and are sent per request to stateless routes that forward them to the provider. See [SECURITY.md](SECURITY.md).
+
+## Bring anything
+
+| From | How |
+|---|---|
+| **Files** | PDF, Markdown, HTML, Word, PowerPoint (with speaker notes), EPUB, notebooks, subtitles, code, CSV/JSON. Several at once, a whole **folder**, or a **ZIP** become one source with a heading per file. Parsed on your device, so size is limited only by memory. |
+| **Links** | Paste one or many: arXiv (real titles), any article (WeChat included), PDFs, GitHub repos and files, public Google Docs/Slides/Sheets. |
+| **Claude Artifacts, Notion, Feishu** | Their share pages render in the browser, so no server can read them. Paste the copied content (headings and lists are kept) or drop the exported `.md` / `.html` / `.zip`. |
+
+## Analytics & admin (for deployers)
+
+Connect any Postgres (Vercel → Storage → **Neon**, free plan) and set `ADMIN_PASSWORD`. Every screen, click, import and listen becomes an anonymous first‑party event, and **`/admin`** (or its own host such as `admin.example.com` via `ADMIN_HOST`) shows:
+
+- **Overview**: visitors, sessions, creators, episodes and minutes made, listen‑through, each against the previous period.
+- **Funnel**: visit → keys or demo → import → create → episode → play → 75 % listened, with drop‑off and time to first episode.
+- **Sources**: referring pages with full URLs, `utm_*` campaigns and landing pages, each with its own conversion. Click one to scope the whole dashboard.
+- **Imports, clicks, generation, listening, audience, client errors**, and a live event stream.
+- **Explore**: read‑only SQL over the `events` table with ready‑made queries (retention cohorts, a visitor's path…) and CSV / NDJSON export.
+
+Nothing is collected without a database; see [SECURITY.md](SECURITY.md) for exactly what is and isn't recorded.
 
 ## Personas & voices
 
@@ -150,7 +171,7 @@ Two voice packs per language — **Studio Interview** (calm, premium) and **Idol
 - [ ] Real sample episodes + an evolution run on the README (in progress)
 - [ ] Pluggable TTS providers (OpenAI, Gemini, local Kokoro / CosyVoice)
 - [ ] Cross‑family judge model; difficulty routing to lite / medium / heavy
-- [ ] Team hub (shared library and harness via Vercel Blob/KV)
+- [ ] Team hub (shared library and harness)
 - [ ] Topic subscriptions → daily briefing; RSS feed output
 - [ ] Signed & notarized macOS build; Windows build
 - [ ] `npx evocast` and an MCP server

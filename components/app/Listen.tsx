@@ -35,7 +35,7 @@ export default function Listen() {
         <div className="stack" style={{ gap: 4 }}>
           <h1 className="title">{T("收听", "Listen")}</h1>
           <span className="caption">
-            {T(`${episodes.length} 期 · 共 ${Math.round(episodes.reduce((a, e) => a + e.durationSec, 0) / 60)} 分钟`, `${episodes.length} episodes · ${Math.round(episodes.reduce((a, e) => a + e.durationSec, 0) / 60)} min`)}
+            {T(`${episodes.length} 期 · 共 ${Math.round(episodes.reduce((a, e) => a + e.durationSec, 0) / 60)} 分钟`, `${episodes.length} episode${episodes.length === 1 ? "" : "s"} · ${Math.round(episodes.reduce((a, e) => a + e.durationSec, 0) / 60)} min`)}
           </span>
         </div>
         {new Set(episodes.map((e) => e.lang)).size > 1 && (
@@ -48,7 +48,7 @@ export default function Listen() {
           const pct = e.feedback?.listenedPct ?? 0;
           return (
             <Reveal key={e.id} i={i}>
-              <button className="ep-card" onClick={() => play(e, true)} aria-label={e.title}>
+              <button className="ep-card" data-track="episode" data-private onClick={() => play(e, true)} aria-label={e.title}>
                 <div className="ep-art">
                   <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
                   <span className="ep-play" style={current && player.playing ? { opacity: 1, transform: "none" } : undefined}>

@@ -9,6 +9,7 @@ import { Check, ChevronDown, Key } from "../ui/icons";
 import { AMBIGUOUS, providerById } from "@/lib/llm/providers";
 import { getProfile, saveProfile, type Settings } from "@/lib/client/store";
 import { modelInfo } from "@/lib/tts/models";
+import { track } from "@/lib/client/track";
 
 interface LLMResult {
   ok: boolean;
@@ -51,7 +52,11 @@ export default function Onboarding() {
   const [draft, setDraft] = useState<Settings>(settings);
   const [name, setName] = useState<string | null>(null);
 
+  useEffect(() => track("onboard_step", { step }), [step]);
+
   const finish = async (s: Settings) => {
+    const demo = s.keys.llmProvider === "mock";
+    track(demo ? "demo_start" : "keys_saved", demo ? {} : { llm: s.keys.llmProviderName ?? s.keys.llmProvider, tts: s.keys.elevenlabsKey ? (s.keys.elevenlabsTier ?? "yes") : "none" });
     if (name) await saveProfile({ ...(await getProfile()), name });
     update({ ...s, onboarded: true });
     await refresh();
@@ -72,7 +77,7 @@ export default function Onboarding() {
                 <Breath />
                 <div className="stack">
                   <h1 className="display">Evocast</h1>
-                  <p className="lede">{T("把几十页的论文与研报，变成你爱听的几分钟。用得越多，它越懂你。", "Turn sixty-page papers into a few minutes you love. The more you use it, the better it knows you.")}</p>
+                  <p className="lede">{T("把论文、研报、文档和链接，变成你爱听的几分钟。用得越多，它越懂你。", "Turn papers, reports, docs and links into a few minutes you love. The more you use it, the better it knows you.")}</p>
                 </div>
                 <div className="stack" style={{ justifyItems: "center", marginTop: 13 }}>
                   <Button variant="primary" size="large" magnetic onClick={() => setStep(1)}>
@@ -103,7 +108,7 @@ export default function Onboarding() {
                   </span>
                 </motion.div>
                 <h1 className="title">{name ? T(`好了，${name}。`, `All set, ${name}.`) : T("一切就绪。", "All set.")}</h1>
-                <p className="lede">{T("丢给我一篇论文、研报或链接就好。剩下的，我会慢慢学会你的口味。", "Hand me a paper, report or link. I'll learn your taste as we go.")}</p>
+                <p className="lede">{T("丢给我论文、研报、文档或链接就好。剩下的，我会慢慢学会你的口味。", "Hand me papers, reports, docs or links. I'll learn your taste as we go.")}</p>
                 <div>
                   <Button variant="primary" size="large" magnetic onClick={() => finish(draft)}>
                     {T("进入", "Enter")}
@@ -113,10 +118,10 @@ export default function Onboarding() {
             )}
           </motion.div>
         </AnimatePresence>
-        <div className="row" style={{ justifyContent: "center", marginTop: 55, opacity: 0.6 }}>
+        <a className="row" href="https://github.com/LittleA-Agentic-RL-Harness/evocast" target="_blank" rel="noreferrer" style={{ justifyContent: "center", marginTop: 55, opacity: 0.6, color: "inherit", textDecoration: "none" }}>
           <Mark size={18} />
           <span className="caption">{lang === "zh" ? "开源 · 由 LittleA 打造" : "Open source · made by LittleA"}</span>
-        </div>
+        </a>
       </div>
     </main>
   );

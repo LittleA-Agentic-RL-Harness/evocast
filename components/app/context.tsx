@@ -5,6 +5,7 @@ import type { Episode, Lang } from "@/lib/types";
 import { visibleSurfaces, type Session, type Surface, type UIGenome } from "@/lib/harness/ui";
 import { SEED_UI } from "@/lib/harness/ui";
 import { EMPTY_PROFILE, type ListenerProfile } from "@/lib/harness/profile";
+import { track } from "@/lib/client/track";
 import { DEFAULT_SETTINGS, getAudio, getProfile, getSessions, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, type Settings } from "@/lib/client/store";
 
 export type View = "home" | "listen" | "you" | "settings";
@@ -61,6 +62,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
   const maxPos = useRef(0);
+  const reached = useRef(new Set<number>());
+
+  /** Listening milestones (25/50/75/100%) once per episode per play-through. */
+  const milestone = useCallback((pct: number) => {
+    for (const m of [25, 50, 75, 100]) {
+      if (pct >= m - 0.5 && !reached.current.has(m)) {
+        reached.current.add(m);
+        track("listen", { pct: m });
+      }
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     const [e, s, g, p] = await Promise.all([listEpisodes(), getSessions(), getUIGenome(), getProfile()]);
@@ -123,6 +135,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
       urlRef.current = URL.createObjectURL(blob);
       maxPos.current = 0;
+      reached.current = new Set();
+      track("play", { lang: e.lang, persona: e.persona, style: e.style, seconds: Math.round(e.durationSec) });
       a.src = urlRef.current;
       a.playbackRate = e.feedback?.rate ?? player.rate;
       setPlayer((p) => ({ ...p, episode: e, time: 0, duration: e.durationSec, sheet: openSheet || p.sheet, rate: a.playbackRate }));
@@ -187,10 +201,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         onTimeUpdate={(e) => {
           const a = e.currentTarget;
           maxPos.current = Math.max(maxPos.current, a.currentTime);
+          if (isFinite(a.duration) && a.duration > 0) milestone((a.currentTime / a.duration) * 100);
           setPlayer((p) => ({ ...p, time: a.currentTime, duration: isFinite(a.duration) ? a.duration : p.duration }));
         }}
         onEnded={async () => {
           maxPos.current = audioRef.current?.duration ?? maxPos.current;
+          milestone(100);
           const ep = player.episode;
           if (ep) {
             const fb = ep.feedback ?? { rating: 0 as const, tags: [], note: "", listenedPct: 0, replays: 0, updatedAt: "" };

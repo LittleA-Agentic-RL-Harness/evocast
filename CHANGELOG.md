@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0 — 2026-10-29
+
+- **Bring anything**: Markdown, HTML, Word, PowerPoint (with speaker notes), EPUB, notebooks, subtitles, code and data files; several files, whole folders and ZIP archives become one source; several links at once; GitHub repos/files and public Google Docs via their plain‑text forms; WeChat articles; rich paste keeps headings and lists. Claude Artifact, Notion and Feishu share links get precise guidance instead of a vague failure. Everything is parsed on the device.
+- **First‑party analytics** (only when the deployment has a database): anonymous events for every screen and click, sources with full referrer URLs and `utm_*`, imports, generation and listening milestones. Honours Do Not Track / GPC; opt‑out in Settings; never keys, content, file names or IPs.
+- **Admin console** on its own host (`ADMIN_HOST`) or `/admin`: overview against the previous period, ordered funnel with time to first episode, sources and campaigns with conversion (click to segment), imports, clicks, generation, listening, audience, client errors, live stream, read‑only SQL and CSV/NDJSON export. Any Postgres; daily retention cron.
+- **Subtraction**: the language switch left the top bar (the browser's language is used; Settings keeps it), niche TTS knobs left Settings, the occasional "try another angle" chip is gone.
+- Security headers on every response.
+
 ## 0.2.0 — 2026-10-28
 
 First public release candidate.

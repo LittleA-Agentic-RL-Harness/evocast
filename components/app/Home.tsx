@@ -13,17 +13,42 @@ import { blend, changedFields, DEFAULT_RECIPE, habitRecipe, type Recipe } from "
 import { buildPortrait, portraitText } from "@/lib/harness/portrait";
 import { LLM_PRICES, ttsUsd } from "@/lib/harness/cost";
 import { estimateTokens } from "@/lib/ingest/clean";
-import { readFileAsText } from "@/lib/client/pdf";
+import { ACCEPT, combine, htmlToText, type Source, type SourceDoc } from "@/lib/ingest/extract";
+import { parseLinks, pickedFromDrop, publicUrl, readLinks, readPicked, type LinkError, type Picked } from "@/lib/client/files";
+import { track } from "@/lib/client/track";
 import { keyHeaders, postJSON } from "@/lib/client/api";
 import { effectiveTtsModel, generateEpisodes, type Progress } from "@/lib/client/pipeline";
 import { addSession, getActive, getHarness, newId, type Settings } from "@/lib/client/store";
 import { checkInterfaceGuard } from "@/lib/client/evolution";
 import type { Harness } from "@/lib/harness/genome";
 
-interface Source {
-  name: string;
-  text: string;
-  removed: string[];
+type Via = "file" | "link" | "paste";
+type T = (zh: string, en: string) => string;
+
+/** Why a link couldn't be read, and what to do instead. */
+function linkMessage(err: LinkError, T: T): string {
+  const host = (() => {
+    try {
+      return new URL(err.url).hostname;
+    } catch {
+      return err.url;
+    }
+  })();
+  switch (err.code) {
+    case "app_rendered":
+      return err.app === "Claude"
+        ? T("Claude Artifact 在浏览器里渲染，服务器读不到正文。在 Claude 里打开它，点「复制」后粘贴到这里，或「下载」后把 .md / .html 文件拖进来。", "Claude artifacts render in the browser, so their text can't be fetched. Open it in Claude, press Copy and paste here, or Download and drop the .md / .html file.")
+        : T(`${err.app} 的分享链接在浏览器里渲染，读不到正文。复制全文粘贴到这里，或导出为 Markdown、HTML、PDF、ZIP 后拖进来。`, `${err.app} share links render in the browser, so the text can't be fetched. Paste the content here, or export it as Markdown, HTML, PDF or ZIP and drop the file.`);
+    case "js_rendered":
+      return T(`${host} 的页面由脚本生成，读不到正文。复制页面文字粘贴，或在浏览器里「存储为网页」后把 .html 拖进来。`, `${host} builds its page with scripts, so the text can't be fetched. Paste the page text, or save the page and drop the .html file.`);
+    case "too_large":
+      return T("链接里的文件超过 40 MB。下载后直接拖进来即可（本机解析没有大小限制）。", "That file is over 40 MB. Download it and drop it here instead (files parsed on this device have no size limit).");
+    case "unsupported":
+    case "empty":
+      return T(`${host} 没有可读的文字。`, `No readable text at ${host}.`);
+    default:
+      return `${host}: ${err.message}`;
+  }
 }
 
 function greeting(lang: Lang, tone: string, name?: string): { hi: string; sub: string } {
@@ -31,8 +56,8 @@ function greeting(lang: Lang, tone: string, name?: string): { hi: string; sub: s
   const part = lang === "zh" ? (h < 5 ? "夜深了" : h < 11 ? "早上好" : h < 13 ? "中午好" : h < 18 ? "下午好" : "晚上好") : h < 5 ? "Still up" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
   const who = name ? (lang === "zh" ? `，${name}` : `, ${name}`) : "";
   const subs: Record<string, [string, string]> = {
-    warm: ["丢给我一篇论文、研报或链接，我把它变成你爱听的几分钟。", "Hand me a paper, report or link — I'll turn it into a few minutes you'll enjoy."],
-    crisp: ["论文、研报、链接。几分钟听懂。", "Papers, reports, links. Understood in minutes."],
+    warm: ["丢给我论文、研报、文档或链接，我把它变成你爱听的几分钟。", "Hand me papers, reports, docs or links — I'll turn them into a few minutes you'll enjoy."],
+    crisp: ["论文、研报、文档、链接。几分钟听懂。", "Papers, reports, docs, links. Understood in minutes."],
     playful: ["今天想消化点什么硬核内容？", "What heavy reading shall we make light today?"],
   };
   const [zh, en] = subs[tone] ?? subs.warm;
@@ -103,36 +128,60 @@ export default function Home() {
     }
   }
 
-  async function loadFile(f: File) {
+  /** Every way in (files, folders, archives, links, pasted text) ends here: one combined source. */
+  async function bring(via: Via, load: () => Promise<{ docs: SourceDoc[]; label?: string; issues: string[]; codes?: LinkError[] }>) {
     setLoading(true);
     setError(null);
+    setNotice(null);
+    const t0 = Date.now();
+    track("import_start", { via });
     try {
-      await onSource(await readFileAsText(f));
+      const { docs, label, issues, codes = [] } = await load();
+      if (!docs.length) {
+        const err = codes[0];
+        throw Object.assign(new Error(err ? linkMessage(err, T) : (issues[0] ?? T("没有读到可用的文字。", "No readable text found."))), { code: err?.code, app: err?.app, host: err ? publicUrl(err.url) : "" });
+      }
+      const src = combine(docs, label);
+      if (src.text.length < 200) throw Object.assign(new Error(T("内容太短，至少需要 200 字。", "Too short: at least 200 characters are needed.")), { code: "short" });
+      track("import_ok", {
+        via,
+        items: docs.length,
+        chars: src.text.length,
+        types: [...new Set(docs.map((d) => d.kind))],
+        urls: docs.map((d) => d.url).filter((u): u is string => Boolean(u)).map(publicUrl).slice(0, 20),
+        skipped: issues.length + codes.length,
+        ms: Date.now() - t0,
+      });
+      if (codes.length) setNotice(codes.map((c) => linkMessage(c, T)).join("\n"));
+      else if (issues.length) setNotice(T(`跳过了 ${issues.length} 个读不了的文件：`, `Skipped ${issues.length} unreadable file(s): `) + issues.slice(0, 3).join(", "));
+      await onSource(src);
     } catch (e) {
-      setError(T("读取失败：", "Could not read: ") + (e as Error).message);
+      const x = e as Error & { code?: string; app?: string; host?: string };
+      track("import_fail", { via, code: x.code ?? "error", app: x.app ?? "", host: x.host ?? "" });
+      setError(x.message);
     } finally {
       setLoading(false);
     }
   }
 
-  async function loadText(input: string) {
+  const loadPicked = (list: Picked[]) =>
+    bring("file", async () => {
+      const r = await readPicked(list);
+      return { docs: r.docs, label: r.label, issues: r.skipped };
+    });
+
+  function loadText(input: string, html?: string) {
     const v = input.trim();
     if (!v) return;
-    setError(null);
-    if (/^https?:\/\//i.test(v)) {
-      setLoading(true);
-      try {
-        await onSource(await postJSON<Source>("/api/ingest", { url: v }, keyHeaders(settings.keys)));
-      } catch (e) {
-        setError((e as Error).message);
-      } finally {
-        setLoading(false);
-      }
-    } else if (v.length >= 200) {
-      await onSource({ name: v.split("\n")[0].slice(0, 60), text: v, removed: [] });
-    } else {
-      setError(T("粘贴一个链接，或至少 200 字的正文。", "Paste a link, or at least 200 characters of text."));
-    }
+    const links = parseLinks(v);
+    if (links) return bring("link", async () => {
+      const r = await readLinks(links, keyHeaders(settings.keys));
+      return { docs: r.docs, issues: [], codes: r.errors };
+    });
+    // Rich clipboard (a page, a doc, a Claude artifact): keep its headings and lists.
+    const rich = html ? htmlToText(html).text : "";
+    const text = rich.length >= v.length * 0.6 ? rich : v;
+    return bring("paste", async () => ({ docs: [{ name: text.split("\n").find((l) => l.trim())!.replace(/^#+\s*/, "").slice(0, 60), text, kind: "paste", removed: [] }], issues: [] }));
   }
 
   const estimate = useMemo(() => {
@@ -150,7 +199,19 @@ export default function Home() {
     if (!source || !prefill) return;
     const ctrl = new AbortController();
     abort.current = ctrl;
+    const t0 = Date.now();
+    let stage = "brief";
     setRun({ progress: null, error: null });
+    track("generate_start", {
+      persona: recipe.persona,
+      style: recipe.style,
+      mode: recipe.mode,
+      langs: recipe.langs.join("+"),
+      minutes: recipe.minutes,
+      lenses: recipe.lenses.length,
+      prefill: changedFields(prefill.shown, recipe).length ? "changed" : "kept",
+      usd: estimate ? Math.round(estimate.usd * 100) / 100 : null,
+    });
     await addSession({
       id: newId("s"),
       at: new Date().toISOString(),
@@ -172,8 +233,12 @@ export default function Home() {
         langs: recipe.langs,
         settings,
         signal: ctrl.signal,
-        onProgress: (p) => setRun({ progress: p, error: null }),
+        onProgress: (p) => {
+          stage = p.stage;
+          setRun({ progress: p, error: null });
+        },
       });
+      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona });
       await refresh();
       setRun(null);
       setSource(null);
@@ -183,14 +248,14 @@ export default function Home() {
         await play(eps[0], true);
       }
     } catch (e) {
+      if (ctrl.signal.aborted) track("generate_cancel", { stage, ms: Date.now() - t0 });
+      else track("generate_fail", { stage, m: (e as Error).message.slice(0, 120), ms: Date.now() - t0 });
       setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : (e as Error).message });
       await refresh();
     }
   }
 
   const g = greeting(lang, ui.copy.tone, profile.name);
-  const recentPersonas = new Set(sessions.slice(-5).map((s) => s.final.persona));
-  const explore = sessions.length >= 4 && sessions.length % 5 === 4 ? PERSONA_IDS.find((p) => !recentPersonas.has(p)) : undefined;
   const generating = Boolean(run && !run.error);
 
   return (
@@ -203,7 +268,7 @@ export default function Home() {
       <AnimatePresence mode="wait">
         {!source ? (
           <motion.div key="drop" initial={{ opacity: 0, scale: 0.985 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.985 }} transition={springSoft}>
-            <DropZone loading={loading} onFile={loadFile} onText={loadText} />
+            <DropZone loading={loading} onFiles={loadPicked} onText={loadText} />
             {ui.shortcuts.length > 0 && (
               <div className="row" style={{ justifyContent: "center", marginTop: 21 }}>
                 <span className="caption">{T("常用", "Usual")}</span>
@@ -220,7 +285,7 @@ export default function Home() {
             <div className={`glow-wrap`} style={{ borderRadius: "var(--r3)" }}>
               {generating && <motion.div className="glow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} />}
               <div className="card stack spotlight" onPointerMove={spotlight} style={{ padding: 21 }}>
-                <div className="row" style={{ flexWrap: "nowrap" }}>
+                <div className="row" style={{ flexWrap: "nowrap" }} data-private>
                   <span className="drop-icon" style={{ width: 38, height: 38, borderRadius: 11, margin: 0 }}>
                     <Doc size={18} />
                   </span>
@@ -228,13 +293,14 @@ export default function Home() {
                     <div className="ellipsis" style={{ fontWeight: 600 }}>
                       {source.name}
                     </div>
-                    <div className="caption">
+                    <div className="caption ellipsis" title={source.items.map((i) => i.name).join("\n")}>
+                      {source.items.length > 1 ? T(`${source.items.length} 份材料 · `, `${source.items.length} sources · `) : ""}
                       {Math.round(source.text.length / 1000)}k {T("字", "chars")} · ≈{Math.round(estimateTokens(source.text) / 1000)}k tokens
-                      {source.removed.length ? ` · ${T("已清理页眉与参考文献", "headers & references removed")}` : ""}
+                      {source.removed.length ? ` · ${T("已清理", "cleaned")}` : ""}
                     </div>
                   </div>
                   {!generating && (
-                    <button className="icon-btn" onClick={() => setSource(null)} aria-label={T("移除", "Remove")}>
+                    <button className="icon-btn" data-track="source_remove" onClick={() => setSource(null)} aria-label={T("移除", "Remove")}>
                       <Xmark size={16} />
                     </button>
                   )}
@@ -245,7 +311,7 @@ export default function Home() {
                     <RecipeSentence recipe={recipe} setRecipe={setRecipe} settings={settings} update={update} />
                     <AnimatePresence>
                       {(thinking || reason) && (
-                        <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="reason">
+                        <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="reason" data-private>
                           <motion.span animate={thinking ? { rotate: [0, 18, -12, 0], scale: [1, 1.15, 1] } : {}} transition={{ repeat: Infinity, duration: 1.4 }} style={{ display: "inline-flex", color: "var(--accent)" }}>
                             <Sparkles size={15} />
                           </motion.span>
@@ -253,11 +319,6 @@ export default function Home() {
                         </motion.div>
                       )}
                     </AnimatePresence>
-                    {explore && !thinking && (
-                      <button className="chip" style={{ justifySelf: "start" }} onClick={() => setRecipe({ ...recipe, persona: explore })}>
-                        {T(`换个角度？试试「${PERSONAS[explore].label.zh}」视角`, `Try a different angle: ${PERSONAS[explore].label.en}`)}
-                      </button>
-                    )}
                     <Tune recipe={recipe} setRecipe={setRecipe} defaultOpen={surfaces.tune && recipe.lenses.length > 0} />
                   </>
                 ) : (
@@ -268,7 +329,7 @@ export default function Home() {
 
             {!generating ? (
               <div className="stack" style={{ justifyItems: "center" }}>
-                <Button variant="primary" size="large" magnetic onClick={generate} disabled={thinking}>
+                <Button variant="primary" size="large" magnetic onClick={generate} disabled={thinking} data-track="create">
                   {T("生成", "Create")}
                   <ArrowRight size={17} />
                 </Button>
@@ -281,7 +342,7 @@ export default function Home() {
               </div>
             ) : (
               <div className="center">
-                <Button variant="plain" onClick={() => abort.current?.abort()}>
+                <Button variant="plain" data-track="cancel" onClick={() => abort.current?.abort()}>
                   {T("取消", "Cancel")}
                 </Button>
               </div>
@@ -307,7 +368,7 @@ export default function Home() {
   );
 }
 
-function DropZone({ loading, onFile, onText }: { loading: boolean; onFile: (f: File) => void; onText: (v: string) => void }) {
+function DropZone({ loading, onFiles, onText }: { loading: boolean; onFiles: (p: Picked[]) => void; onText: (v: string, html?: string) => void }) {
   const { T } = useApp();
   const [over, setOver] = useState(false);
   const [val, setVal] = useState("");
@@ -317,10 +378,11 @@ function DropZone({ loading, onFile, onText }: { loading: boolean; onFile: (f: F
       <AnimatePresence>{(over || loading) && <motion.div className="glow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />}</AnimatePresence>
       <motion.div
         className="drop spotlight"
+        data-track="drop_zone"
         onPointerMove={spotlight}
         animate={{ scale: over ? 1.012 : 1 }}
         transition={spring}
-        onClick={(e) => (e.target as HTMLElement).closest(".paste") === null && fileRef.current?.click()}
+        onClick={(e) => !loading && (e.target as HTMLElement).closest(".paste") === null && fileRef.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
           setOver(true);
@@ -329,36 +391,49 @@ function DropZone({ loading, onFile, onText }: { loading: boolean; onFile: (f: F
         onDrop={(e) => {
           e.preventDefault();
           setOver(false);
-          const f = e.dataTransfer.files[0];
-          if (f) onFile(f);
-          else onText(e.dataTransfer.getData("text"));
+          if (loading) return;
+          if (e.dataTransfer.files.length) pickedFromDrop(e.dataTransfer).then(onFiles);
+          else onText(e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text"), e.dataTransfer.getData("text/html") || undefined);
         }}
       >
         <div>
           <motion.div className="drop-icon" animate={{ y: over ? -5 : 0 }} transition={spring}>
             <ArrowUp size={24} />
           </motion.div>
-          <div className="headline">{loading ? T("正在读…", "Reading…") : T("拖入 PDF，或点这里选择", "Drop a PDF, or click to choose")}</div>
+          <div className="headline">{loading ? T("正在读…", "Reading…") : T("拖入文件或文件夹", "Drop files or a folder")}</div>
           <div className="caption" style={{ marginTop: 5 }}>
-            {T("论文 · 研报 · 文章 —— 文件只在本机解析", "Papers · reports · articles — parsed on this device")}
+            {T("PDF、Markdown、网页、Word、PPT、EPUB、ZIP，在本机解析", "PDF, Markdown, HTML, Word, PowerPoint, EPUB, ZIP, parsed on this device")}
           </div>
           <form
             className="paste"
+            data-track="paste_field"
             onSubmit={(e) => {
               e.preventDefault();
               onText(val);
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <input placeholder={T("或粘贴 arXiv / 网页链接、正文…", "Or paste an arXiv / web link, or text…")} value={val} onChange={(e) => setVal(e.target.value)} onPaste={(e) => {
-              const t = e.clipboardData.getData("text");
-              if (/^https?:\/\//i.test(t.trim())) {
-                e.preventDefault();
-                setVal(t.trim());
-                onText(t);
-              }
-            }} />
-            <button className="btn primary small" type="submit" disabled={!val.trim() || loading} aria-label={T("读取", "Read")} style={{ width: 34, height: 34, padding: 0 }}>
+            <input
+              placeholder={T("或粘贴链接、正文", "Or paste links or text")}
+              value={val}
+              onChange={(e) => setVal(e.target.value)}
+              onPaste={(e) => {
+                const files = [...e.clipboardData.files];
+                if (files.length) {
+                  e.preventDefault();
+                  onFiles(files.map((file) => ({ file, path: file.name })));
+                  return;
+                }
+                const text = e.clipboardData.getData("text/plain");
+                // Links and long text go straight in (a single-line field would flatten the paragraphs).
+                if (parseLinks(text) || text.trim().length >= 200) {
+                  e.preventDefault();
+                  setVal("");
+                  onText(text, e.clipboardData.getData("text/html") || undefined);
+                }
+              }}
+            />
+            <button className="btn primary small" type="submit" data-track="paste_submit" disabled={!val.trim() || loading} aria-label={T("读取", "Read")} style={{ width: 34, height: 34, padding: 0 }}>
               <ArrowRight size={15} />
             </button>
           </form>
@@ -366,11 +441,13 @@ function DropZone({ loading, onFile, onText }: { loading: boolean; onFile: (f: F
         <input
           ref={fileRef}
           type="file"
-          accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain"
+          multiple
+          accept={ACCEPT}
           className="sr"
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) onFile(f);
+            const files = [...(e.target.files ?? [])];
+            e.target.value = "";
+            if (files.length) onFiles(files.map((file) => ({ file, path: file.name })));
           }}
         />
       </motion.div>

@@ -5,13 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
 import { Button, Dialog, Disclosure, Segmented, Toggle, springSoft } from "../ui/kit";
 import { Check, Key, Play, Pause, Sparkles } from "../ui/icons";
-import type { Lang, Mode, Speaker, StyleId } from "@/lib/types";
+import type { Lang, Speaker, StyleId } from "@/lib/types";
 import { STYLES, STYLE_IDS, resolveVoices, type VoiceSlot } from "@/lib/harness/styles";
-import { TTS_MODEL_INFO, TTS_MODELS, modelInfo } from "@/lib/tts/models";
+import { modelInfo } from "@/lib/tts/models";
 import { getJSON, keyHeaders, postJSON } from "@/lib/client/api";
-import { getSting } from "@/lib/client/pipeline";
+import { downloadBlob, getSting } from "@/lib/client/pipeline";
 import { DEFAULT_SETTINGS, idb, type Settings } from "@/lib/client/store";
-import { downloadBlob } from "@/lib/client/pipeline";
 import type { SharedVoice, VoiceInfo, DesignPreview } from "@/lib/tts/elevenlabs";
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
@@ -67,7 +66,7 @@ export default function SettingsView() {
 
       <Voices />
 
-      <Section title={T("外观", "Appearance")}>
+      <Section title={T("通用", "General")}>
         <div className="card list" style={{ padding: "4px 21px" }}>
           <div className="list-row">
             <span className="grow">{T("主题", "Theme")}</span>
@@ -84,42 +83,24 @@ export default function SettingsView() {
             </div>
             <Toggle on={Boolean(settings.showAll)} onChange={(v) => update({ ...settings, showAll: v })} label="show all" />
           </div>
+          <div className="list-row">
+            <div className="grow">
+              <div>{T("分享匿名使用数据", "Share anonymous usage")}</div>
+              <div className="caption">{T("只记录用了哪些功能、从哪里来；不含钥匙、文档内容和音频", "Which features are used and where visitors come from; never keys, documents or audio")}</div>
+            </div>
+            <Toggle on={settings.analytics !== false} onChange={(v) => update({ ...settings, analytics: v })} label="analytics" />
+          </div>
         </div>
       </Section>
 
       <Disclosure title={T("高级", "Advanced")}>
         <div className="stack-lg">
           <div className="card list" style={{ padding: "4px 21px" }}>
-            {(["lite", "medium", "heavy"] as Mode[]).map((m) => (
-              <div key={m} className="list-row">
-                <span className="mode-dot" style={{ background: `var(--${m})` }} />
-                <span style={{ width: 64 }}>{m}</span>
-                <select
-                  className="field"
-                  style={{ padding: "7px 10px" }}
-                  value={settings.ttsOverride[m] ?? ""}
-                  onChange={(e) => {
-                    const o = { ...settings.ttsOverride };
-                    if (e.target.value) o[m] = e.target.value;
-                    else delete o[m];
-                    update({ ...settings, ttsOverride: o });
-                  }}
-                >
-                  <option value="">{T("自动（最新对话模型 / 跟随 Harness）", "Auto (newest dialogue model / harness)")}</option>
-                  {TTS_MODELS.map((id) => (
-                    <option key={id} value={id}>
-                      {TTS_MODEL_INFO[id].label} — ${TTS_MODEL_INFO[id].usdPer1k}/1K
-                    </option>
-                  ))}
-                </select>
+            <div className="list-row">
+              <div className="grow">
+                <div>{T("共享部署口令", "Shared deployment passcode")}</div>
+                <div className="caption">{T("仅当部署者设置了 APP_PASSCODE 并提供服务端 Key 时需要", "Only needed when the deployer set APP_PASSCODE and provides server keys")}</div>
               </div>
-            ))}
-            <div className="list-row">
-              <span className="grow">{T("TTS 价格系数（套餐实际单价 ÷ 按量价）", "TTS price multiplier (your rate ÷ pay-as-you-go)")}</span>
-              <input className="field" type="number" step="0.05" min="0" style={{ width: 89 }} value={settings.ttsMultiplier} onChange={(e) => update({ ...settings, ttsMultiplier: Math.max(0, Number(e.target.value) || 0) })} />
-            </div>
-            <div className="list-row">
-              <span className="grow">{T("共享部署口令", "Shared deployment passcode")}</span>
               <input className="field" type="password" style={{ width: 160 }} value={k.passcode ?? ""} onChange={(e) => update({ ...settings, keys: { ...k, passcode: e.target.value || undefined } })} />
             </div>
           </div>

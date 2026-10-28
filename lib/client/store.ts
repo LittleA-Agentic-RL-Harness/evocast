@@ -131,6 +131,8 @@ export interface Settings {
   theme?: "system" | "light" | "dark";
   /** Prepend an Eleven Music intro sting (paid ElevenLabs plans). */
   sting?: boolean;
+  /** Anonymous usage analytics (only where the deployment collects it). Undefined = on. */
+  analytics?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -146,7 +148,8 @@ const SETTINGS_KEY = "evocast-settings";
 export function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
+    // First visit: speak the browser's language.
+    if (!raw) return { ...DEFAULT_SETTINGS, uiLang: /^zh/i.test(navigator.language) ? "zh" : "en" };
     const parsed = JSON.parse(raw) as Partial<Settings>;
     return { ...DEFAULT_SETTINGS, ...parsed, keys: { ...DEFAULT_SETTINGS.keys, ...parsed.keys } };
   } catch {
