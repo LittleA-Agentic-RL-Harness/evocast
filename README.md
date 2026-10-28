@@ -68,6 +68,12 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 <td><b>Two keys — detected, verified, newest models picked</b><br/>
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/keys-dark.png"><img src="docs/assets/keys-light.png" alt="Two-key onboarding" /></picture></td>
 </tr>
+<tr>
+<td><b>Welcome — try it free, no keys</b><br/>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/welcome-dark.png"><img src="docs/assets/welcome-light.png" alt="Welcome" /></picture></td>
+<td><b>Evolve — a real Pareto front: lite · medium · heavy</b><br/>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/engine-dark.png"><img src="docs/assets/engine-light.png" alt="Evolution engine" /></picture></td>
+</tr>
 </table>
 
 <p align="center">
@@ -76,7 +82,7 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 <img src="docs/assets/mobile-you-dark.png" width="230" alt="Mobile portrait" />
 </p>
 
-<sub>Screenshots are from the built‑in demo mode (no keys, placeholder scripts quoting the source, silent audio) using real arXiv papers.</sub>
+<sub>Every screen shows real episodes made on the free trial from real arXiv papers: scripts by Claude Opus 5.5, voices by ElevenLabs, and one real evolution run.</sub>
 
 ## How it works
 
@@ -173,7 +179,7 @@ Two voice packs per language — **Studio Interview** (calm, premium) and **Idol
 
 ## Roadmap
 
-- [ ] Real sample episodes + an evolution run on the README (in progress)
+- [x] Free trial on Vercel AI Gateway; real episodes and a real evolution run in the README
 - [ ] Pluggable TTS providers (OpenAI, Gemini, local Kokoro / CosyVoice)
 - [ ] Cross‑family judge model; difficulty routing to lite / medium / heavy
 - [ ] Team hub (shared library and harness)

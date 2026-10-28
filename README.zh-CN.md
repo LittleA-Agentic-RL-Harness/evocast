@@ -64,9 +64,13 @@
 <td><b>首次打开：一句问候，一个拖放框</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/home-empty-dark.png"><img src="docs/assets/home-empty-light.png" /></picture></td>
 <td><b>两把钥匙：自动识别，实时校验</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/keys-dark.png"><img src="docs/assets/keys-light.png" /></picture></td>
 </tr>
+<tr>
+<td><b>欢迎页：不填 Key 也能免费试用</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/welcome-dark.png"><img src="docs/assets/welcome-light.png" /></picture></td>
+<td><b>进化：真实跑出来的帕累托三档</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/engine-dark.png"><img src="docs/assets/engine-light.png" /></picture></td>
+</tr>
 </table>
 
-<sub>截图来自内置的演示模式：不需要 Key，脚本是引用原文的占位稿，音频为静音；所用论文均为真实 arXiv 论文。</sub>
+<sub>截图里都是用免费试用、从真实 arXiv 论文生成的真实节目：Claude Opus 5.5 写稿，ElevenLabs 配音，并真实跑过一轮进化。</sub>
 
 ## 快速开始
 

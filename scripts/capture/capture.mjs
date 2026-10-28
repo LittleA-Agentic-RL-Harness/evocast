@@ -141,6 +141,9 @@ async function onboarding(theme) {
   nativeTheme.themeSource = theme;
   const bw = win(`capture-onboard-${theme}-${Date.now()}`, 1440, 900, 2);
   await load(bw, "/?still", 2);
+  // A fresh visitor follows the browser's language; the README shows the Chinese UI.
+  await run(bw, `localStorage.setItem("evocast-settings", JSON.stringify({ keys: { llmProvider: "anthropic" }, uiLang: "zh", ttsOverride: {}, ttsMultiplier: 1, voiceOverrides: {}, theme: ${JSON.stringify(theme)} }));`);
+  await load(bw, "/?still", 2);
   await shot(bw, `welcome-${theme}`);
   await run(bw, `const h = window.__h; await h.click("开始"); await h.sleep(600);
     const input = await h.waitFor(() => document.querySelector("input[type=password]")); h.setInput(input, "sk-0123456789abcdef0123456789abcdef"); await h.sleep(2500);`);
@@ -193,8 +196,7 @@ async function record() {
   await run(bw, `const h = window.__h; await h.waitFor(() => document.querySelector(".sheet"), ${GEN_MS});`);
   resume();
   await run(bw, `const h = window.__h; await h.sleep(5200);
-    document.querySelector(".scrim")?.click(); await h.sleep(1400);
-    await h.click("你"); await h.sleep(3200);`);
+    document.querySelector(".scrim")?.click(); await h.sleep(3200);`);
   recording = false;
   bw.destroy();
   if (frames.length < 10) throw new Error("no frames recorded");

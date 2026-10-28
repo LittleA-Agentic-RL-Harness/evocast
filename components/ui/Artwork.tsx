@@ -26,13 +26,23 @@ function hash(s: string): number {
   return h;
 }
 
-function wrap(title: string, maxUnits: number, maxLines: number): string[] {
+/** The cover carries the headline: the part before a colon, when there is one. */
+export function headline(title: string): string {
+  const t = title.replace(/^【演示】|^\[Demo\]\s*/, "");
+  const head = t.split(/：|:\s/)[0].trim();
+  return head.length >= 3 && head.length < t.length ? head : t;
+}
+
+// Closing punctuation never starts a line (CJK line-breaking rules).
+const NO_START = /^[，。、；：！？）」』》〉】…,.;:!?)\]]/;
+
+export function wrap(title: string, maxUnits: number, maxLines: number): string[] {
   const lines: string[] = [];
   let cur = "";
   let units = 0;
   for (const word of title.split(/(?<=[\s　-鿿])|(?=[㐀-鿿])/)) {
     const u = [...word].reduce((n, c) => n + (/[㐀-鿿＀-￯]/.test(c) ? 1 : 0.56), 0);
-    if (units + u > maxUnits && cur) {
+    if (units + u > maxUnits && cur && !NO_START.test(word)) {
       lines.push(cur.trim());
       cur = "";
       units = 0;
@@ -42,7 +52,14 @@ function wrap(title: string, maxUnits: number, maxLines: number): string[] {
     units += u;
   }
   if (lines.length < maxLines && cur.trim()) lines.push(cur.trim());
-  if (lines.length === maxLines && lines.join("").length < title.replace(/\s/g, "").length) lines[maxLines - 1] = lines[maxLines - 1].replace(/.{1}$/, "…");
+  // No single-character orphan on the last line: "自己进 / 化" → "自己 / 进化".
+  const n = lines.length;
+  if (n > 1 && [...lines[n - 1]].length === 1 && /[㐀-鿿]$/.test(lines[n - 2])) {
+    lines[n - 1] = lines[n - 2].slice(-1) + lines[n - 1];
+    lines[n - 2] = lines[n - 2].slice(0, -1).trimEnd();
+  }
+  const shown = lines.join("").replace(/\s/g, "").length;
+  if (lines.length === maxLines && shown < title.replace(/\s/g, "").length) lines[maxLines - 1] = lines[maxLines - 1].replace(/[\s，。、；：,.;:]*.$/, "…");
   return lines;
 }
 
@@ -55,7 +72,7 @@ export default function Artwork({ title, style, eyebrow, seed }: { title: string
     const r = (h >> (i * 7)) & 127;
     return { cx: 20 + (r % 70), cy: 15 + ((r * 13) % 60), r: 34 + ((r * 7) % 30) };
   });
-  const lines = wrap(title.replace(/^【演示】|^\[Demo\]\s*/, ""), 9.5, 3);
+  const lines = wrap(headline(title), 9.5, 3);
   const ink = dark ? "#ffffff" : "#1d1d1f";
   return (
     <svg viewBox="0 0 100 100" width="100%" height="100%" role="img" aria-label={title} style={{ display: "block" }}>
