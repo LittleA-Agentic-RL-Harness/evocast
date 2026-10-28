@@ -1,0 +1,11 @@
+desktop
+dist-desktop
+build
+output
+tests
+.next
+node_modules
+docs
+launch
+scripts/capture
+.capture-frames

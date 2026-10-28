@@ -1,0 +1,20 @@
+{
+  "name": "evocast-desktop",
+  "productName": "Evocast",
+  "version": "0.2.0",
+  "description": "Evocast for macOS — runs the whole app (and its API) locally.",
+  "author": "LittleA",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "dev": "electron .",
+    "dist": "electron-builder --mac --arm64 --publish never",
+    "dir": "electron-builder --mac --arm64 --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
+  }
+}

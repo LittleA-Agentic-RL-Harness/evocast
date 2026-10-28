@@ -1,0 +1,18 @@
+node_modules
+.next
+out
+.env*.local
+.env
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+output/
+dist-desktop/
+desktop/node_modules/
+
+# local launch notes (not published)
+launch/
+.capture-frames/
+.vercel
+.claude/
+.DS_Store

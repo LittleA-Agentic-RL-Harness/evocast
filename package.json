@@ -1,0 +1,59 @@
+{
+  "name": "evocast",
+  "version": "0.2.0",
+  "private": true,
+  "description": "AI-native podcasts that evolve with you — turn long papers & reports into short, audience-aware two-host episodes, with a self-improving harness (HarnessPro) and an interface that learns you.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "podcast": "tsx scripts/podcast.mts",
+    "desktop:prepare": "BUILD_TARGET=desktop next build && node scripts/desktop-prepare.mjs",
+    "desktop:dev": "npm --prefix desktop run dev",
+    "desktop:build": "npm run desktop:prepare && npm --prefix desktop run dist",
+    "desktop:app": "npm run desktop:prepare && npm --prefix desktop run dir"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "motion": "^14.7.1",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "unpdf": "^1.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9"
+  },
+  "license": "Apache-2.0",
+  "author": "LittleA (https://github.com/LittleA-Agentic-RL-Harness)",
+  "homepage": "https://github.com/LittleA-Agentic-RL-Harness/evocast",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LittleA-Agentic-RL-Harness/evocast.git"
+  },
+  "bugs": {
+    "url": "https://github.com/LittleA-Agentic-RL-Harness/evocast/issues"
+  },
+  "keywords": [
+    "podcast",
+    "ai-native",
+    "elevenlabs",
+    "claude",
+    "notebooklm-alternative",
+    "self-improving",
+    "harness",
+    "rsi",
+    "text-to-speech",
+    "nextjs"
+  ]
+}

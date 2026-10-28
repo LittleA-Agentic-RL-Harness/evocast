@@ -1,0 +1,23 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks! Please **never paste API keys** in issues."
+  - type: textarea
+    id: what
+    attributes: { label: What happened?, description: Steps to reproduce, expected vs actual. }
+    validations: { required: true }
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options: [Web (Vercel), Web (self-hosted), PWA, macOS app, CLI]
+    validations: { required: true }
+  - type: input
+    id: providers
+    attributes: { label: Providers / models, placeholder: "e.g. Anthropic claude-opus-5-5 + ElevenLabs eleven_v4 (Creator)" }
+  - type: textarea
+    id: logs
+    attributes: { label: Logs or screenshots, render: shell }

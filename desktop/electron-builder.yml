@@ -1,0 +1,28 @@
+appId: ai.littlea.evocast
+productName: Evocast
+copyright: "© 2026 LittleA — Apache-2.0"
+directories:
+  output: ../dist-desktop
+  buildResources: ../build
+files:
+  - main.mjs
+  - preload.cjs
+  - package.json
+  - "!after-pack.cjs"
+# The Next standalone server lives outside asar (it chdirs into its folder) and is
+# copied verbatim by after-pack.cjs, since extraResources drops node_modules and .next.
+afterPack: ./after-pack.cjs
+mac:
+  category: public.app-category.productivity
+  icon: ../build/icon.png
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  # Ad-hoc signature: unsigned arm64 apps are reported as "damaged"; ad-hoc ones can be opened via Privacy & Security.
+  identity: "-"
+  hardenedRuntime: false
+  darkModeSupport: true
+dmg:
+  title: Evocast

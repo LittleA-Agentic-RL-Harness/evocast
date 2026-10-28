@@ -1,0 +1,11 @@
+name: Feature request
+description: Suggest an idea
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: What problem would this solve?, description: Who is the listener, and what do they need? }
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes: { label: Proposal, description: "If it's a harness change: how would we measure it (fixed test, replay, cost)?" }

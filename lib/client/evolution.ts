@@ -1,0 +1,351 @@
+"use client";
+
+import type { Episode, EpisodeRequest, Mode } from "../types";
+import { applyPatch, describeOp, diffHarness, SEEDS, type Harness, type PatchOp } from "../harness/genome";
+import { MODE_WEIGHTS, paretoFilter, selectModes, SPREAD_WEIGHTS } from "../harness/pareto";
+import { buildTestSuite, RULE_TESTS } from "../harness/tests";
+import { targetChars, type EpisodeTrace, type PlannerPriority } from "../harness/prompts";
+import { notesFor } from "../harness/profile";
+import { ttsUsd } from "../harness/cost";
+import type { Diagnosis, Plan } from "../harness/schemas";
+import { stripTags } from "../tts/tags";
+import { keyHeaders, postJSON } from "./api";
+import { applyUIPatch, changedFields, DEFAULT_RECIPE, prefillHitRate, RECIPE_FIELDS, replayHitRate, shouldRevert, tunePrefill, type UIGenome, type UIPatch } from "../harness/ui";
+import { buildPortrait, portraitText } from "../harness/portrait";
+import {
+  getActive,
+  getEvolutionLog,
+  getSessions,
+  getUIGenome,
+  getUIGuard,
+  getUIHistory,
+  setUIGenome,
+  getProfile,
+  getSource,
+  idb,
+  listEpisodes,
+  listHarnesses,
+  newId,
+  saveEvolutionLog,
+  saveHarness,
+  saveProfile,
+  setActive,
+  type EvolutionLogEntry,
+  type HarnessRecord,
+  type Settings,
+} from "./store";
+
+/**
+ * One HarnessPro epoch, orchestrated from the browser (each step is one API call):
+ *   0. measure parents (and the seed floor) on a FIXED validation set with FIXED tests
+ *   1. trajectory analysis of recent episodes + listener feedback
+ *   2. plans per parent under cost / balanced / quality priorities → whitelisted patches
+ *   3. evaluate candidates (pass rate + cost per episode)
+ *   4. drop below-floor and Pareto-dominated harnesses, pick lite / medium / heavy
+ */
+export interface EvolveOptions {
+  breadth: "quick" | "full";
+  valSize: number;
+  scope: "script" | "full";
+  /** Use the wider 1:10 selection spread instead of the paper's (1,2)/(1,1)/(2,1). */
+  spread?: boolean;
+  settings: Settings;
+  onLog: (line: string) => void;
+  signal?: AbortSignal;
+}
+
+const MODE_PRIORITY: Record<Mode, PlannerPriority> = { lite: "cost", medium: "balanced", heavy: "quality" };
+const BRIEF_PATHS = (p: string) => p.startsWith("brief.") || p === "pipeline.briefEffort";
+
+interface EvalResponse {
+  passRate: number | null;
+  script: { lines: { text: string }[] };
+  productionUsd: number;
+}
+
+function requestOf(e: Episode): EpisodeRequest {
+  return { lang: e.lang, persona: e.persona, style: e.style, mode: e.mode, minutes: e.minutes, lenses: e.lenses, direction: e.direction };
+}
+
+/** Fixed validation set (HarnessPro keeps D_val constant across epochs): diverse, distinct sources. */
+async function validationSet(episodes: Episode[], size: number): Promise<Episode[]> {
+  const stored = (await idb.get<string[]>("kv", "val-set")) ?? [];
+  const byId = new Map(episodes.map((e) => [e.id, e]));
+  let picked = stored.map((id) => byId.get(id)).filter((e): e is Episode => Boolean(e));
+  if (picked.length < Math.min(size, episodes.length)) {
+    const seen = new Set(picked.map((e) => e.sourceName));
+    const combos = new Set(picked.map((e) => `${e.persona}|${e.lang}`));
+    const rest = episodes.filter((e) => !picked.includes(e));
+    // Prefer new sources, then new persona×language combinations.
+    rest.sort((a, b) => Number(seen.has(a.sourceName)) - Number(seen.has(b.sourceName)) || Number(combos.has(`${a.persona}|${a.lang}`)) - Number(combos.has(`${b.persona}|${b.lang}`)));
+    for (const e of rest) {
+      if (picked.length >= size) break;
+      picked.push(e);
+      seen.add(e.sourceName);
+      combos.add(`${e.persona}|${e.lang}`);
+    }
+    await idb.put("kv", "val-set", picked.map((e) => e.id));
+  }
+  picked = picked.slice(0, size);
+  return picked;
+}
+
+export async function resetValidationSet() {
+  await idb.del("kv", "val-set");
+}
+
+function traceOf(e: Episode, h: Harness): EpisodeTrace {
+  const checks = new Map([...buildTestSuite(e.tests, requestOf(e), h), ...RULE_TESTS].map((t) => [t.id, t.check]));
+  const f = e.feedback;
+  return {
+    id: e.id,
+    title: e.title,
+    persona: e.persona,
+    lang: e.lang,
+    style: e.style,
+    mode: e.mode,
+    minutes: e.minutes,
+    harnessId: e.harnessId,
+    targetChars: targetChars(h, e.lang, e.minutes),
+    actualChars: e.script.lines.reduce((n, l) => n + stripTags(l.text).length, 0),
+    passRate: e.metrics.passRate,
+    failed: e.results.filter((r) => !r.pass).map((r) => ({ id: r.id, check: checks.get(r.id) ?? r.id, note: r.note })),
+    costUsd: Number((e.metrics.llmUsd + e.metrics.ttsUsd).toFixed(4)),
+    feedback: f
+      ? `rating=${f.rating} tags=[${f.tags.join(", ")}] note="${f.note}" listened=${Math.round(f.listenedPct)}% replays=${f.replays}`
+      : "no feedback",
+    opening: e.script.lines.slice(0, 3).map((l) => `${l.speaker}: ${l.text}`).join(" | ").slice(0, 600),
+    closing: e.script.lines.slice(-2).map((l) => `${l.speaker}: ${l.text}`).join(" | ").slice(0, 400),
+  };
+}
+
+export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> {
+  const { settings, onLog, signal } = opts;
+  const headers = keyHeaders(settings.keys, settings.llmPrice);
+  const episodes = await listEpisodes();
+  if (episodes.length === 0) throw new Error("Generate at least one episode first — evolution learns from real runs.");
+
+  const records = new Map((await listHarnesses()).map((r) => [r.harness.id, r] as const));
+  const harnessOf = (id: string) => records.get(id)?.harness ?? SEEDS.medium;
+  const active = await getActive();
+  const profile = await getProfile();
+  const log = await getEvolutionLog();
+  const epoch = log.length + 1;
+
+  const val = await validationSet(episodes, opts.valSize);
+  const sig = `${opts.scope}:${val.map((e) => e.id).join(",")}`;
+  onLog(`Epoch ${epoch}: validation set = ${val.length} episode(s): ${val.map((e) => `"${e.title}" (${e.persona}/${e.lang})`).join(", ")}`);
+  const tasks = await Promise.all(
+    val.map(async (e) => ({
+      brief: e.brief,
+      tests: e.tests,
+      request: requestOf(e),
+      notes: notesFor(profile, e.persona),
+      sourceText: opts.scope === "full" && e.sourceId ? (await getSource(e.sourceId))?.text : undefined,
+    })),
+  );
+
+  const ttsFor = (h: Harness, mode?: Mode): string => (mode && settings.ttsOverride[mode]) || h.pipeline.ttsModel;
+
+  async function measure(h: Harness, label: string): Promise<{ pass: number; cost: number }> {
+    const rec: HarnessRecord = records.get(h.id) ?? { harness: h, metrics: {} };
+    const cached = rec.metrics[sig];
+    if (cached) return cached;
+    const runs = [];
+    for (const task of tasks) {
+      if (signal?.aborted) throw new Error("Cancelled");
+      runs.push(await postJSON<EvalResponse>("/api/evolve", { action: "evaluate", harness: h, task }, headers, signal));
+    }
+    const pass = runs.reduce((n, r) => n + (r.passRate ?? 0), 0) / runs.length;
+    const cost =
+      runs.reduce((n, r) => n + r.productionUsd + ttsUsd(ttsFor(h), r.script.lines.reduce((c, l) => c + l.text.length, 0), settings.ttsMultiplier), 0) / runs.length;
+    const m = { pass: Number(pass.toFixed(4)), cost: Number(cost.toFixed(4)), n: runs.length, at: new Date().toISOString() };
+    rec.metrics[sig] = m;
+    records.set(h.id, rec);
+    await saveHarness(rec);
+    onLog(`  measured ${label}: pass ${(m.pass * 100).toFixed(1)}%, cost $${m.cost.toFixed(3)}/episode`);
+    return m;
+  }
+
+  // Stage 0 — parents and the performance floor. HarnessPro uses PR(h0) of a single seed;
+  // we start from three seeds (lite/medium/heavy), so the floor is the weakest seed's pass
+  // rate — otherwise the deliberately cheaper lite seed would be filtered out on day one.
+  const parentIds = [...new Set([active.lite, active.medium, active.heavy])];
+  const parents = parentIds.map(harnessOf);
+  onLog(`Stage 0 · measuring ${parents.length} parent harness(es) + seed floor`);
+  const metrics = new Map<string, { pass: number; cost: number }>();
+  for (const p of parents) metrics.set(p.id, await measure(p, p.label));
+  const seedPasses: number[] = [];
+  for (const s of Object.values(SEEDS)) seedPasses.push((await measure(s, `${s.label} (floor)`)).pass);
+  const floor = Math.min(...seedPasses);
+
+  // Stage 1 — trajectory analysis.
+  onLog("Stage 1 · analyzing recent episodes and your feedback");
+  const traces = episodes.slice(0, 12).map((e) => traceOf(e, harnessOf(e.harnessId)));
+  const { diagnosis } = await postJSON<{ diagnosis: Diagnosis }>("/api/evolve", { action: "analyze", harness: harnessOf(active.medium), traces, uiLang: settings.uiLang }, headers, signal);
+  onLog(`  ${diagnosis.summary}`);
+  for (const d of diagnosis.diagnoses.slice(0, 6)) onLog(`  • ${d.issue} [${d.source}] — ${d.impact}`);
+  const diagnosesText = diagnosis.diagnoses.map((d, i) => `${i + 1}. ${d.issue}\n   impact: ${d.impact}\n   source: ${d.source}\n   evidence: ${d.evidence}`).join("\n");
+
+  const merged = [...new Set([...profile.notes, ...diagnosis.listener_notes])].slice(-12);
+  await saveProfile({ ...profile, notes: merged, summary: diagnosis.portrait_summary || profile.summary });
+  if (diagnosis.listener_notes.length) onLog(`  learned ${diagnosis.listener_notes.length} listener preference(s)`);
+
+  // Stage 2 — plan + edit.
+  onLog("Stage 2 · planning candidate harnesses");
+  const candidates: Harness[] = [];
+  for (const p of parents) {
+    const modes = (Object.keys(active) as Mode[]).filter((m) => active[m] === p.id);
+    const priorities: PlannerPriority[] = opts.breadth === "full" ? ["cost", "balanced", "quality"] : [...new Set(modes.map((m) => MODE_PRIORITY[m]))];
+    const peers = parents
+      .filter((q) => q.id !== p.id)
+      .map((q) => ({ id: q.id, diff: diffHarness(p, q), pass: metrics.get(q.id)?.pass ?? null, cost: metrics.get(q.id)?.cost ?? null }));
+    for (const priority of priorities) {
+      if (signal?.aborted) throw new Error("Cancelled");
+      const { plan } = await postJSON<{ plan: Plan }>(
+        "/api/evolve",
+        { action: "plan", priority, scope: opts.scope, harness: p, metrics: metrics.get(p.id), diagnoses: diagnosesText, peers },
+        headers,
+        signal,
+      );
+      const inScope: PatchOp[] = plan.ops.filter((op) => opts.scope === "full" || !BRIEF_PATHS(op.path));
+      const id = newId(`h${epoch}`);
+      const { harness, applied, rejected } = applyPatch(p, inScope, {
+        id,
+        label: `E${epoch} · ${priority} · ${plan.title}`.slice(0, 80),
+        note: `E${epoch} (${priority}) from ${p.id}: ${plan.title} — ${plan.rationale}`.slice(0, 400),
+      });
+      onLog(`  [${priority}] ${plan.title} (quality ${plan.expected_quality}, cost ${plan.expected_cost})`);
+      for (const a of applied) onLog(`     ${a}`);
+      for (const r of [...rejected, ...plan.ops.filter((o) => !inScope.includes(o)).map((o) => `${describeOp(o)} — out of scope`)]) onLog(`     ✗ ${r}`);
+      if (applied.length && diffHarness(p, harness).length) candidates.push(harness);
+    }
+  }
+
+  // Stage 3 — evaluate candidates.
+  onLog(`Stage 3 · evaluating ${candidates.length} candidate(s)`);
+  for (const c of candidates) {
+    records.set(c.id, { harness: c, metrics: {} });
+    metrics.set(c.id, await measure(c, c.label));
+  }
+
+  // Stage 4 — filter + select.
+  const pool = [...parents, ...candidates].map((h) => ({ id: h.id, ...metrics.get(h.id)! }));
+  const front = paretoFilter(pool, floor);
+  const selected = selectModes(front.length ? front : pool.filter((p) => parentIds.includes(p.id)), opts.spread ? SPREAD_WEIGHTS : MODE_WEIGHTS);
+  if (!selected) throw new Error("Selection produced no harness.");
+  const next = { lite: selected.lite.id, medium: selected.medium.id, heavy: selected.heavy.id };
+  await setActive(next);
+  // Keep every candidate (even rejected ones) for the version history.
+  for (const c of candidates) {
+    const rec = records.get(c.id);
+    if (rec) await saveHarness(rec);
+  }
+
+  const lines = (Object.keys(next) as Mode[]).map((m) => `${m}: ${harnessOf(next[m]).label} (pass ${(metrics.get(next[m])!.pass * 100).toFixed(1)}%, $${metrics.get(next[m])!.cost.toFixed(3)})`);
+  onLog(`Stage 4 · floor ${(floor * 100).toFixed(1)}% · Pareto front ${front.length}/${pool.length}`);
+  for (const l of lines) onLog(`  → ${l}`);
+
+  // Stage 5 — the same loop on the interface: prefill, disclosure, shortcuts, tone.
+  const uiLines = await evolveInterface(settings, onLog, signal, episodes);
+
+  const entry: EvolutionLogEntry = {
+    at: new Date().toISOString(),
+    epoch,
+    summary: diagnosis.summary,
+    lines: [...lines, ...uiLines],
+    points: pool.map((p) => ({
+      id: p.id,
+      pass: p.pass,
+      cost: p.cost,
+      kind: !front.some((f) => f.id === p.id) ? "rejected" : parentIds.includes(p.id) ? "parent" : "candidate",
+      selected: (Object.keys(next) as Mode[]).filter((m) => next[m] === p.id),
+    })),
+  };
+  await saveEvolutionLog([...log, entry]);
+  return entry;
+}
+
+/** Rough upper bound on LLM spend for one epoch, from what past episodes cost. */
+export function estimateEpochUsd(episodes: Episode[], opts: { breadth: "quick" | "full"; valSize: number; parents: number }): number {
+  const avg = episodes.length ? episodes.reduce((n, e) => n + e.metrics.llmUsd, 0) / episodes.length : 0.2;
+  const plans = opts.breadth === "full" ? opts.parents * 3 : opts.parents;
+  const evals = (plans + opts.parents + 1) * Math.min(opts.valSize, episodes.length || 1);
+  return evals * avg * 0.7 + (1 + plans) * 0.05;
+}
+
+// ------------------------------------------------------------------ interface harness
+
+/**
+ * Evolve the interface genome: (1) free self-tuning of prefill knobs by replaying past
+ * sessions, (2) the interface planner rewrites prefill rules / shortcuts / disclosure /
+ * tone from evidence, (3) a live guard (see checkInterfaceGuard) reverts regressions.
+ */
+export async function evolveInterface(settings: Settings, onLog: (l: string) => void, signal: AbortSignal | undefined, episodes: Episode[]): Promise<string[]> {
+  const sessions = await getSessions();
+  const g = await getUIGenome();
+  const fallback = DEFAULT_RECIPE(settings.uiLang);
+  const out: string[] = [];
+  const pct = (v: number | null) => (v === null ? "–" : `${Math.round(v * 100)}%`);
+  onLog(`Stage 5 · interface harness (${sessions.length} create session(s), live prefill hit ${pct(prefillHitRate(sessions.slice(-8)))})`);
+
+  let next: UIGenome = g;
+  const tuned = tunePrefill(g, sessions, fallback);
+  if (tuned.genome !== g) {
+    const p = tuned.genome.prefill;
+    next = {
+      ...tuned.genome,
+      id: newId("ui"),
+      parentId: g.id,
+      createdAt: new Date().toISOString(),
+      changelog: [...g.changelog.slice(-9), `Replay-tuned prefill: ${p.strategy}, half-life ${p.halfLife}, content weight ${p.contentWeight} (hit ${pct(tuned.before)} → ${pct(tuned.after)})`],
+    };
+    out.push(`interface: prefill self-tuned by replay ${pct(tuned.before)} → ${pct(tuned.after)}`);
+    onLog(`  ${out.at(-1)}`);
+  } else {
+    onLog(`  replay hit rate ${pct(tuned.before)} — prefill knobs already best${sessions.length < 3 ? " (needs ≥3 sessions to tune)" : ""}`);
+  }
+
+  if (sessions.length >= 2) {
+    const recent = sessions.slice(-12);
+    const fieldMiss = RECIPE_FIELDS.map((f) => `${f}: changed in ${recent.filter((x) => changedFields(x.prefill, x.final).includes(f)).length}/${recent.length}`);
+    const stats = [
+      `live hit rate (last ${recent.length}): ${pct(prefillHitRate(recent))}`,
+      `replay hit rate with current knobs: ${pct(replayHitRate(next, sessions, fallback))}`,
+      `median seconds from open to generate: ${Math.round([...recent.map((x) => x.msToGenerate)].sort((a, b) => a - b)[Math.floor(recent.length / 2)] / 1000)}`,
+      `episodes so far: ${episodes.length}`,
+      ...fieldMiss,
+    ].join("\n");
+    const sessionsText = recent
+      .map((x) => `"${x.docTitle.slice(0, 60)}": prefill ${JSON.stringify({ ...x.prefill, direction: undefined })} → final ${JSON.stringify({ ...x.final, direction: undefined })}`)
+      .join("\n");
+    const portrait = portraitText(buildPortrait(episodes, sessions, await getProfile()), await getProfile());
+    const { patch } = await postJSON<{ patch: UIPatch }>(
+      "/api/evolve",
+      { action: "ui-plan", ui: next, stats, portrait, sessions: sessionsText, uiLang: settings.uiLang },
+      keyHeaders(settings.keys, settings.llmPrice),
+      signal,
+    );
+    next = applyUIPatch(next, patch, newId("ui"), fallback);
+    out.push(`interface: ${patch.rationale}`.slice(0, 200));
+    onLog(`  planner: ${patch.rationale}`);
+    for (const sc of next.shortcuts) onLog(`     shortcut "${sc.label}"`);
+  }
+
+  if (next !== g) {
+    await setUIGenome(next, { parentId: g.id, parentRate: prefillHitRate(sessions.slice(-6)), since: new Date().toISOString() });
+  }
+  return out;
+}
+
+/** Called after every create session: revert an interface change whose live hit rate regressed. */
+export async function checkInterfaceGuard(): Promise<string | null> {
+  const guard = await getUIGuard();
+  if (!guard) return null;
+  const since = (await getSessions()).filter((x) => x.at > guard.since);
+  if (!shouldRevert(since, guard.parentRate)) return null;
+  const parent = (await getUIHistory()).find((h) => h.id === guard.parentId);
+  if (!parent) return null;
+  await setUIGenome(parent, null);
+  return `Interface change reverted: prefill hit rate dropped to ${Math.round((prefillHitRate(since) ?? 0) * 100)}% (was ${Math.round((guard.parentRate ?? 0) * 100)}%).`;
+}

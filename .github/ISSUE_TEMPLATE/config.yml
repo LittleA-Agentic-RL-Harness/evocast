@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & ideas
+    url: https://github.com/LittleA-Agentic-RL-Harness/evocast/discussions
+    about: Ask and share in Discussions
+  - name: Security report
+    url: https://github.com/LittleA-Agentic-RL-Harness/evocast/security/advisories/new
+    about: Please report vulnerabilities privately
