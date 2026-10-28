@@ -8,7 +8,7 @@ import { Check, Key, Play, Pause, Sparkles } from "../ui/icons";
 import type { Lang, Speaker, StyleId } from "@/lib/types";
 import { STYLES, STYLE_IDS, resolveVoices, type VoiceSlot } from "@/lib/harness/styles";
 import { modelInfo } from "@/lib/tts/models";
-import { getJSON, keyHeaders, postJSON } from "@/lib/client/api";
+import { getJSON, getTrial, keyHeaders, postJSON } from "@/lib/client/api";
 import { downloadBlob, getSting } from "@/lib/client/pipeline";
 import { DEFAULT_SETTINGS, idb, type Settings } from "@/lib/client/store";
 import type { SharedVoice, VoiceInfo, DesignPreview } from "@/lib/tts/elevenlabs";
@@ -28,6 +28,11 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 export default function SettingsView() {
   const { T, settings, update, refresh } = useApp();
   const k = settings.keys;
+  const trial = k.llmProvider === "hosted";
+  const [left, setLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (trial) void getTrial().then((t) => setLeft(t.available ? (t.left ?? 0) : null));
+  }, [trial]);
   return (
     <div className="column stack-lg">
       <div className="stack" style={{ gap: 6 }}>
@@ -42,25 +47,33 @@ export default function SettingsView() {
             <div className="grow">
               <div style={{ fontWeight: 550 }}>{T("大模型", "Model")}</div>
               <div className="caption">
-                {k.llmProvider === "mock" ? T("演示模式", "Demo mode") : k.llmKey ? `${k.llmProviderName ?? k.llmProvider} · ${k.llmModel ?? "claude-opus-5-5"}` : T("未设置", "Not set")}
+                {k.llmProvider === "mock" ? T("演示模式", "Demo mode") : trial ? T("免费试用 · Claude Opus 5.5", "Free trial · Claude Opus 5.5") : k.llmKey ? `${k.llmProviderName ?? k.llmProvider} · ${k.llmModel ?? "claude-opus-5-5"}` : T("未设置", "Not set")}
               </div>
             </div>
-            {k.llmKey && k.llmProvider !== "mock" && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
+            {k.llmKey && k.llmProvider !== "mock" && !trial && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
+            {trial && <span className="badge accent">{T("试用", "Trial")}</span>}
           </div>
           <div className="list-row">
             <Key size={18} style={{ color: "var(--label-3)" }} />
             <div className="grow">
               <div style={{ fontWeight: 550 }}>ElevenLabs</div>
               <div className="caption">
-                {k.elevenlabsKey ? `${k.elevenlabsTier ?? ""} · ${modelInfo(k.elevenlabsModel ?? "")?.label.split(" ·")[0] ?? k.elevenlabsModel ?? "Eleven v4"}` : T("未设置", "Not set")}
+                {k.elevenlabsKey ? `${k.elevenlabsTier ?? ""} · ${modelInfo(k.elevenlabsModel ?? "")?.label.split(" ·")[0] ?? k.elevenlabsModel ?? "Eleven v4"}` : trial ? T("免费试用 · Eleven v4", "Free trial · Eleven v4") : T("未设置", "Not set")}
               </div>
             </div>
             {k.elevenlabsKey && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
           </div>
         </div>
         <div className="row">
-          <Button onClick={() => update({ ...settings, onboarded: false })}>{T("重新设置钥匙", "Set up keys again")}</Button>
+          <Button onClick={() => update({ ...settings, onboarded: false })}>{trial || k.llmProvider === "mock" ? T("填上自己的钥匙", "Add your own keys") : T("重新设置钥匙", "Set up keys again")}</Button>
           {k.llmProvider === "mock" && <span className="caption">{T("当前是演示模式：脚本为占位，音频为静音。", "Demo mode: placeholder scripts, silent audio.")}</span>}
+          {trial && (
+            <span className="caption">
+              {T("免费试用由 Vercel AI Gateway 提供算力，每天有额度", "The free trial runs on Vercel AI Gateway, with a daily allowance")}
+              {left !== null ? T(`，今天还剩 $${left.toFixed(2)}。`, ` — $${left.toFixed(2)} left today.`) : T("。", ".")}
+              {T("用完后填上自己的钥匙即可继续。", " Add your own keys to keep going after that.")}
+            </span>
+          )}
         </div>
       </Section>
 
@@ -292,6 +305,12 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
 
   useEffect(() => {
     if (!target || tab === "design") return;
+    const k = settings.keys;
+    if (!k.elevenlabsKey && (k.llmProvider === "hosted" || k.llmProvider === "mock")) {
+      setVoices([]);
+      setError(T("换声音需要你自己的 ElevenLabs Key，在「钥匙」里填上即可。", "Changing voices needs your own ElevenLabs key: add it under Keys."));
+      return;
+    }
     let live = true;
     setBusy(true);
     setError(null);

@@ -70,7 +70,7 @@
 
 ## 快速开始
 
-- **直接用**：打开[在线体验](https://evocast.vercel.app)，填入两把钥匙，或者先试演示模式。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。
+- **直接用**：打开[在线体验](https://evocast.vercel.app)，不填 Key 也能免费试用，或者填上自己的两把钥匙。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。
 - **一键部署自己的**：[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FLittleA-Agentic-RL-Harness%2Fevocast&project-name=evocast&repository-name=evocast)
 - **本地运行**：
 
@@ -93,6 +93,10 @@
 
 Key 只保存在你的设备上，服务端不存储、不记录。
 
+## 免费试用（不需要 Key）
+
+部署在 Vercel 上时，访客不填 Key 也能先试。试用由 [Vercel AI Gateway](https://vercel.com/docs/ai-gateway) 运行 **Claude Opus 5.5** 和 **ElevenLabs**，用部署自带的 OIDC 身份认证（没有需要创建或轮换的 Key），费用记在团队的 AI Gateway 额度上。每次调用都按实际花费记到 Postgres，并有两道每日上限：每位访客（`TRIAL_VISITOR_USD`，默认每天 1.5 美元）和全站（`TRIAL_DAILY_USD`，默认每天 5 美元）；材料最多读取前 10 万字。没有数据库或设置了 `TRIAL=off` 时，欢迎页改为提供离线演示。不在 Vercel 上时，设置 `AI_GATEWAY_API_KEY` 即可。
+
 ## 什么都能导入
 
 | 来源 | 方式 |
@@ -106,9 +110,10 @@ Key 只保存在你的设备上，服务端不存储、不记录。
 连上任意 Postgres（Vercel → Storage → **Neon**，免费档即可），再设置 `ADMIN_PASSWORD`。每个页面、每次点击、导入和收听都会变成匿名的第一方事件，**`/admin`**（也可以通过 `ADMIN_HOST` 放在独立域名，比如 `admin.example.com`）里可以看到：
 
 - **概览**：访客、会话、生成过节目的人、节目数和制作分钟、听完率，都和上一周期对比。
-- **漏斗**：访问 → 设好钥匙或演示 → 导入 → 点击生成 → 节目生成 → 开始收听 → 听完 75%，每一步的流失，以及到第一期节目的中位时间。
+- **漏斗**：访问 → 设好钥匙或开始试用 → 导入 → 点击生成 → 节目生成 → 开始收听 → 听完 75%，每一步的流失，以及到第一期节目的中位时间。
 - **来源**：完整的来源网址、`utm_*` 推广活动和落地页，各自的转化率；点任意来源，整个看板只看这部分人。
 - **导入、点击、生成、收听、访客画像、前端报错**，以及实时事件流。
+- **试用算力**：今天的试用花费和上限、AI Gateway 实时余额、大模型与语音各花了多少。
 - **自助分析**：对 `events` 表的只读 SQL，内置留存、单个访客路径等查询，支持导出 CSV / NDJSON。
 
 没连数据库就什么都不记录；具体记录和不记录哪些内容，见 [SECURITY.md](SECURITY.md)。

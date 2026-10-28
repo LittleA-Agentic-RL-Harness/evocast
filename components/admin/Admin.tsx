@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Mark } from "../ui/Mark";
 import { Button, Reveal, Segmented, spotlight, springSoft } from "../ui/kit";
 import { Download, Exit, Key, Refresh, Xmark } from "../ui/icons";
-import type { Stats } from "@/lib/analytics/server";
+import type { AdminStats as Stats } from "@/app/api/admin/stats/route";
 
 type T = (zh: string, en: string) => string;
 type Range = "24h" | "7d" | "30d" | "90d";
@@ -213,6 +213,7 @@ function Dashboard({ T }: { T: T }) {
               <Imports T={T} d={data} />
               <Behavior T={T} d={data} />
               <Generation T={T} d={data} />
+              <Compute T={T} d={data} />
               <Audience T={T} d={data} onPick={filterBy} />
               {data.errors.length > 0 && <Errors T={T} d={data} />}
               <Live T={T} />
@@ -628,7 +629,8 @@ function Behavior({ T, d }: { T: T; d: Stats }) {
 function Generation({ T, d }: { T: T; d: Stats }) {
   const g = d.generation.totals as Record<string, number>;
   const dims = d.generation.dims;
-  const dimName: Record<string, string> = { persona: T("听众", "Persona"), mode: T("档位", "Mode"), style: T("声线", "Voices"), langs: T("语言", "Language"), minutes: T("时长（分钟）", "Minutes"), prefill: T("预填是否被改动", "Prefill kept/changed") };
+  const dimName: Record<string, string> = { persona: T("听众", "Persona"), mode: T("档位", "Mode"), style: T("声线", "Voices"), langs: T("语言", "Language"), minutes: T("时长（分钟）", "Minutes"), prefill: T("预填是否被改动", "Prefill kept/changed"), compute: T("算力", "Compute") };
+  const computeName: Record<string, string> = { trial: T("免费试用", "Free trial"), own: T("自己的钥匙", "Own keys"), demo: T("演示", "Demo") };
   const listen = d.generation.listening as { pct: number; visitors: number }[];
   const plays = listen.find((l) => l.pct === 25)?.visitors ?? 0;
   return (
@@ -648,7 +650,7 @@ function Generation({ T, d }: { T: T; d: Stats }) {
           {Object.entries(dims).map(([k, rows]) => (
             <div key={k} className="stack" style={{ gap: 4 }}>
               <span className="eyebrow">{dimName[k] ?? k}</span>
-              <BarList empty="—" items={rows.map((r) => ({ label: r.v, n: r.n }))} />
+              <BarList empty="—" items={rows.map((r) => ({ label: (k === "compute" ? computeName[r.v] : undefined) ?? r.v, n: r.n }))} />
             </div>
           ))}
           {d.generation.fails.length > 0 && (
@@ -673,6 +675,50 @@ function Generation({ T, d }: { T: T; d: Stats }) {
         </div>
       </Card>
     </div>
+  );
+}
+
+const usd = (n: number) => `$${n >= 100 ? Math.round(n).toLocaleString() : n.toFixed(2)}`;
+
+/** The free trial runs on the team's AI Gateway credits: real, metered spend against daily caps. */
+function Compute({ T, d }: { T: T; d: Stats }) {
+  const { range, today, limits } = d.trial;
+  const on = d.gateway.trial;
+  return (
+    <Card
+      title={T("试用算力", "Trial compute")}
+      hint={T("没有 Key 的访客由 Vercel AI Gateway 运行 Claude Opus 5.5 与 ElevenLabs，每次调用按实际花费记账", "Visitors without keys run Claude Opus 5.5 and ElevenLabs on Vercel AI Gateway; every call is metered at its real cost")}
+      right={<span className={`badge${on ? " good" : ""}`}>{on ? T("开放中", "Open") : T("未开放", "Off")}</span>}
+    >
+      <div className="stack">
+        <div className="row" style={{ alignItems: "baseline", gap: 8 }}>
+          <span className="tile-value">{usd(today.usd)}</span>
+          <span className="caption">{T(`今天 · 全站上限 ${usd(limits.daily)}`, `today · site cap ${usd(limits.daily)}`)}</span>
+        </div>
+        <div className="meter" role="meter" aria-valuemin={0} aria-valuemax={limits.daily} aria-valuenow={today.usd} aria-label={T("今日试用花费", "Trial spend today")}>
+          <i style={{ width: `${Math.min(100, limits.daily > 0 ? (today.usd / limits.daily) * 100 : 0)}%` }} />
+        </div>
+        <span className="caption">{T(`今天 ${today.people} 位访客用过试用 · 每人每天最多 ${usd(limits.visitor)}`, `${today.people} ${today.people === 1 ? "visitor" : "visitors"} used the trial today · up to ${usd(limits.visitor)} each per day`)}</span>
+        <div className="kv">
+          <dt>{T("Gateway 余额", "Gateway balance")}</dt>
+          <dd>{d.gateway.balance ? usd(d.gateway.balance.balance) : "—"}</dd>
+          <dt>{T("本周期试用花费", "Trial spend in range")}</dt>
+          <dd>{usd(range.usd)}</dd>
+          <dt>{T("大模型", "Model")}</dt>
+          <dd>{usd(range.llm)}</dd>
+          <dt>{T("语音", "Voice")}</dt>
+          <dd>{usd(range.tts)} · {fmtN(range.ttsChars)} {T("字符", "chars")}</dd>
+          {range.music > 0 && (
+            <>
+              <dt>{T("片头音乐", "Intro sting")}</dt>
+              <dd>{usd(range.music)}</dd>
+            </>
+          )}
+          <dt>{T("调用次数", "Calls")}</dt>
+          <dd>{fmtN(range.calls)}</dd>
+        </div>
+      </div>
+    </Card>
   );
 }
 

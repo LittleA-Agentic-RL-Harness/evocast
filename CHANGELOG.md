@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 — 2026-10-29
+
+- **Real from the first click**: visitors without keys get a free trial that makes real episodes, with Claude Opus 5.5 and ElevenLabs Eleven v4 running on Vercel AI Gateway under the deployment's own identity. Every call is metered at its real cost and capped per visitor and per site each day; past the cap, people are asked for their own keys. The silent demo remains only where no trial is offered.
+- **Admin shows real spend**: trial spend today against the cap, the live AI Gateway balance, model vs. voice cost; generation is split by compute (trial, own keys, demo); the funnel counts trial starts.
+- Brief, script and evolution functions may run up to 800 s (Fluid compute).
+
 ## 0.3.0 — 2026-10-29
 
 - **Bring anything**: Markdown, HTML, Word, PowerPoint (with speaker notes), EPUB, notebooks, subtitles, code and data files; several files, whole folders and ZIP archives become one source; several links at once; GitHub repos/files and public Google Docs via their plain‑text forms; WeChat articles; rich paste keeps headings and lists. Claude Artifact, Notion and Feishu share links get precise guidance instead of a vague failure. Everything is parsed on the device.

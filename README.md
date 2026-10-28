@@ -101,7 +101,7 @@ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design notes and rese
 
 ## Quick start
 
-**Use it** — open the [live demo](https://evocast.vercel.app), paste two keys (or try demo mode). Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*.
+**Use it** — open the [live demo](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*.
 
 **Deploy your own** — one click, no environment variables needed (everyone brings their own keys):
 
@@ -134,6 +134,10 @@ npm run podcast -- --file report.pdf --harness my-evolved-harness.json
 
 Keys stay on your device and are sent per request to stateless routes that forward them to the provider. See [SECURITY.md](SECURITY.md).
 
+## Free trial (no keys)
+
+On Vercel, visitors can try Evocast before bringing keys. The trial runs **Claude Opus 5.5** and **ElevenLabs** on [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), authenticated by the deployment's own OIDC identity (nothing to create or rotate) and billed to the team's AI Gateway credits. Every call is metered at its real cost in Postgres and capped per visitor (`TRIAL_VISITOR_USD`, default $1.50 a day) and for the whole site (`TRIAL_DAILY_USD`, default $5 a day); sources are read up to their first 100k characters. Without a database, or with `TRIAL=off`, the welcome screen offers the offline demo instead. Off Vercel, set `AI_GATEWAY_API_KEY`.
+
 ## Bring anything
 
 | From | How |
@@ -147,9 +151,10 @@ Keys stay on your device and are sent per request to stateless routes that forwa
 Connect any Postgres (Vercel → Storage → **Neon**, free plan) and set `ADMIN_PASSWORD`. Every screen, click, import and listen becomes an anonymous first‑party event, and **`/admin`** (or its own host such as `admin.example.com` via `ADMIN_HOST`) shows:
 
 - **Overview**: visitors, sessions, creators, episodes and minutes made, listen‑through, each against the previous period.
-- **Funnel**: visit → keys or demo → import → create → episode → play → 75 % listened, with drop‑off and time to first episode.
+- **Funnel**: visit → keys or trial → import → create → episode → play → 75 % listened, with drop‑off and time to first episode.
 - **Sources**: referring pages with full URLs, `utm_*` campaigns and landing pages, each with its own conversion. Click one to scope the whole dashboard.
 - **Imports, clicks, generation, listening, audience, client errors**, and a live event stream.
+- **Trial compute**: today's trial spend against the cap, the live AI Gateway balance, model and voice spend.
 - **Explore**: read‑only SQL over the `events` table with ready‑made queries (retention cohorts, a visitor's path…) and CSV / NDJSON export.
 
 Nothing is collected without a database; see [SECURITY.md](SECURITY.md) for exactly what is and isn't recorded.

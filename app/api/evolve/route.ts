@@ -6,7 +6,7 @@ import type { EpisodeTrace, PlannerPriority } from "@/lib/harness/prompts";
 import type { Brief, EpisodeRequest, TestCase } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 type Body =
   | { action: "analyze"; harness: unknown; traces: EpisodeTrace[]; uiLang?: "zh" | "en" }
@@ -28,7 +28,7 @@ type Body =
 
 /**
  * HarnessPro-style evolution steps, orchestrated by the browser one call at a time
- * (each fits a 300 s function): analyze → plan ×3 priorities → evaluate candidates.
+ * (each fits one function call): analyze → plan ×3 priorities → evaluate candidates.
  */
 export async function POST(req: Request) {
   try {

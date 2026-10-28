@@ -1,5 +1,6 @@
 import { composeSting, ElevenError } from "@/lib/tts/elevenlabs";
-import { errorResponse, resolveElevenKey } from "@/lib/server/keys";
+import { gatewayMusic, GATEWAY_MUSIC_USD_PER_S } from "@/lib/tts/gateway";
+import { errorResponse, isTrial, resolveElevenKey, resolveTrialSpeech } from "@/lib/server/keys";
 import { silentMp3 } from "@/lib/tts/mp3";
 
 export const runtime = "nodejs";
@@ -14,6 +15,13 @@ const PROMPTS = {
 export async function POST(req: Request) {
   try {
     const { style } = (await req.json()) as { style: keyof typeof PROMPTS };
+    if (isTrial(req)) {
+      const { apiKey, meter } = resolveTrialSpeech(req);
+      await meter.admit();
+      const audio = await gatewayMusic(apiKey, PROMPTS[style] ?? PROMPTS.studio).catch((e) => Promise.reject(meter.translate(e)));
+      await meter.record("music", 7 * GATEWAY_MUSIC_USD_PER_S, 7);
+      return new Response(audio as BodyInit, { headers: { "content-type": "audio/mpeg" } });
+    }
     const key = resolveElevenKey(req);
     const audio = !key && req.headers.get("x-llm-provider") === "mock" ? silentMp3(3) : await composeSting(key ?? "", PROMPTS[style] ?? PROMPTS.studio);
     return new Response(audio as BodyInit, { headers: { "content-type": "audio/mpeg" } });

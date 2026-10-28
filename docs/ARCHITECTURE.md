@@ -114,7 +114,7 @@ flowchart TB
 
 | Constraint | Design |
 |---|---|
-| Vercel: ≤300 s per function, ≤4.5 MB bodies | PDFs parsed in the browser; TTS chunked to ≤2.5 min of audio; evolution orchestrated step-by-step from the client |
+| Vercel: ≤800 s per function (Pro, Fluid compute), ≤4.5 MB bodies | PDFs parsed in the browser; TTS chunked to ≤2.5 min of audio; evolution orchestrated step-by-step from the client |
 | Text-to-Dialogue: ≤2,000 chars / request | chunks ≤1,800 chars; `previous_text`/`future_text` across chunks |
 | Mandarin ≈ 4 chars/s | Chinese chunks ≈ 625 chars (keeps responses under 4.5 MB) |
 | Mac app needs the API locally | Electron `utilityProcess` runs the Next standalone server on a fixed port (stable IndexedDB origin) |
@@ -132,4 +132,5 @@ flowchart LR
 
 - **Ingest** is one isomorphic module: the browser uses it for dropped files (no upload, no size limit), the server for links. Archives expand; several documents are combined under a water‑filled character budget that stays below Vercel's 4.5 MB request limit.
 - **Analytics** is one append‑only `events` table (BRIN on time, btrees on name and visitor), created on first write. The collector answers `204` immediately and writes with `after()`. Every dashboard number is a plain SQL query, so anything on the dashboard can be re‑derived in the read‑only SQL console. A daily cron purges raw events older than `ANALYTICS_RETENTION_DAYS`.
+- **Free trial**: a visitor without keys sends `x-llm-provider: hosted`. `lib/server/keys.ts` points the Anthropic SDK at Vercel AI Gateway (`anthropic/claude-opus-5.5`) with the request's OIDC token, and `/api/tts` voices each line through the gateway's ElevenLabs speech models, in parallel, so line starts stay exact. A `Meter` (`lib/server/trial.ts`) admits every call against today's per‑visitor and site caps and records its real cost in `trial_usage`; the visitor is a salted hash of the client address that changes daily. The admin reads the same table plus the live gateway balance.
 - **Admin** runs on its own host when `ADMIN_HOST` is set (`proxy.ts` maps it to `/admin` and hides `/admin` elsewhere), behind `ADMIN_PASSWORD` and a signed HttpOnly cookie.

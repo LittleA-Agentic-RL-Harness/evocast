@@ -118,7 +118,8 @@ export interface ClientKeys {
   /** Auto-picked newest ElevenLabs dialogue model for this key (e.g. eleven_v4). */
   elevenlabsModel?: string;
   elevenlabsTier?: string;
-  llmProvider: "anthropic" | "openai" | "mock";
+  /** "hosted" = the deployment's free trial (Vercel AI Gateway, capped per day); "mock" = offline demo. */
+  llmProvider: "anthropic" | "openai" | "mock" | "hosted";
   /** Display name of the detected provider (DeepSeek, Qwen, OpenRouter…). */
   llmProviderName?: string;
   llmKey?: string;

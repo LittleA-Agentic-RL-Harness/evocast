@@ -16,7 +16,7 @@ import { estimateTokens } from "@/lib/ingest/clean";
 import { ACCEPT, combine, htmlToText, type Source, type SourceDoc } from "@/lib/ingest/extract";
 import { parseLinks, pickedFromDrop, publicUrl, readLinks, readPicked, type LinkError, type Picked } from "@/lib/client/files";
 import { track } from "@/lib/client/track";
-import { keyHeaders, postJSON } from "@/lib/client/api";
+import { ApiError, getTrial, keyHeaders, postJSON, type Trial } from "@/lib/client/api";
 import { effectiveTtsModel, generateEpisodes, type Progress } from "@/lib/client/pipeline";
 import { addSession, getActive, getHarness, newId, type Settings } from "@/lib/client/store";
 import { checkInterfaceGuard } from "@/lib/client/evolution";
@@ -184,16 +184,24 @@ export default function Home() {
     return bring("paste", async () => ({ docs: [{ name: text.split("\n").find((l) => l.trim())!.replace(/^#+\s*/, "").slice(0, 60), text, kind: "paste", removed: [] }], issues: [] }));
   }
 
+  const onTrial = settings.keys.llmProvider === "hosted";
+  const [trial, setTrial] = useState<Trial | null>(null);
+  useEffect(() => {
+    if (onTrial && !run) void getTrial().then(setTrial);
+  }, [onTrial, run]);
+
   const estimate = useMemo(() => {
     if (!harness || !source) return null;
     const tts = effectiveTtsModel(harness, recipe.mode, settings);
     const chars = recipe.langs.reduce((n, l) => n + harness.script.charsPerMinute[l] * recipe.minutes, 0);
-    const model = settings.keys.llmProvider === "mock" ? "mock" : settings.keys.llmModel || "claude-opus-5-5";
-    const price = settings.llmPrice ?? LLM_PRICES[model];
+    const model = settings.keys.llmProvider === "mock" ? "mock" : onTrial ? "claude-opus-5-5" : settings.keys.llmModel || "claude-opus-5-5";
+    const price = onTrial ? LLM_PRICES[model] : (settings.llmPrice ?? LLM_PRICES[model]);
     const passes = 1 + (harness.pipeline.grade ? 0.4 : 0) + (harness.pipeline.revise ? 1.4 : 0);
-    const llm = price ? ((estimateTokens(source.text) + 4000) * price.input + 5000 * price.output + recipe.langs.length * passes * (6000 * price.input + 4000 * price.output)) / 1e6 : 0;
-    return { usd: llm + ttsUsd(tts, chars, settings.ttsMultiplier), tts };
-  }, [harness, source, recipe, settings]);
+    const read = onTrial ? source.text.slice(0, trial?.maxChars ?? Infinity) : source.text;
+    const llm = price ? ((estimateTokens(read) + 4000) * price.input + 5000 * price.output + recipe.langs.length * passes * (6000 * price.input + 4000 * price.output)) / 1e6 : 0;
+    return { usd: llm + ttsUsd(tts, chars, onTrial ? 1 : settings.ttsMultiplier, onTrial), tts, cut: read.length < source.text.length };
+  }, [harness, source, recipe, settings, onTrial, trial]);
+  const trialOut = onTrial && trial !== null && (!trial.available || (trial.left ?? 0) < 0.05);
 
   async function generate() {
     if (!source || !prefill) return;
@@ -211,6 +219,7 @@ export default function Home() {
       lenses: recipe.lenses.length,
       prefill: changedFields(prefill.shown, recipe).length ? "changed" : "kept",
       usd: estimate ? Math.round(estimate.usd * 100) / 100 : null,
+      compute: onTrial ? "trial" : settings.keys.llmProvider === "mock" ? "demo" : "own",
     });
     await addSession({
       id: newId("s"),
@@ -250,7 +259,14 @@ export default function Home() {
     } catch (e) {
       if (ctrl.signal.aborted) track("generate_cancel", { stage, ms: Date.now() - t0 });
       else track("generate_fail", { stage, m: (e as Error).message.slice(0, 120), ms: Date.now() - t0 });
-      setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : (e as Error).message });
+      const code = e instanceof ApiError ? e.code : undefined;
+      const message =
+        code === "trial_limit"
+          ? T("今天的免费额度用完了。在设置里填上自己的钥匙就能继续，或者明天再来。", "Your free allowance for today is used up. Add your own keys in Settings to keep going, or come back tomorrow.")
+          : code === "trial_closed"
+            ? T("今天的免费试用名额已满。在设置里填上自己的钥匙就能继续，或者明天再来。", "Today's free trial is fully used. Add your own keys in Settings to keep going, or come back tomorrow.")
+            : (e as Error).message;
+      setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     }
   }
@@ -329,15 +345,28 @@ export default function Home() {
 
             {!generating ? (
               <div className="stack" style={{ justifyItems: "center" }}>
-                <Button variant="primary" size="large" magnetic onClick={generate} disabled={thinking} data-track="create">
+                <Button variant="primary" size="large" magnetic onClick={generate} disabled={thinking || trialOut} data-track="create">
                   {T("生成", "Create")}
                   <ArrowRight size={17} />
                 </Button>
                 {estimate && (
                   <span className="caption tabular">
                     {recipe.langs.length > 1 ? T("中英两期 · ", "Two episodes · ") : ""}
-                    {T(`约 ${recipe.minutes} 分钟`, `~${recipe.minutes} min`)} · {T("预计", "est.")} ${estimate.usd.toFixed(2)}
+                    {T(`约 ${recipe.minutes} 分钟`, `~${recipe.minutes} min`)} ·{" "}
+                    {onTrial
+                      ? trialOut
+                        ? T("今天的免费额度用完了", "Today's free allowance is used up")
+                        : (trial?.left ?? 0) >= estimate.usd
+                          ? T("免费试用", "Free trial")
+                          : T("免费试用 · 今天的额度可能不够，试试更短的时长", "Free trial · today's allowance may not cover this; try a shorter length")
+                      : `${T("预计", "est.")} $${estimate.usd.toFixed(2)}`}
+                    {onTrial && estimate.cut && !trialOut ? T(" · 只读前 10 万字", " · reads the first 100k chars") : ""}
                   </span>
+                )}
+                {trialOut && (
+                  <button className="btn small plain" onClick={() => go("settings")}>
+                    {T("填上自己的钥匙", "Add your own keys")}
+                  </button>
                 )}
               </div>
             ) : (
@@ -354,7 +383,7 @@ export default function Home() {
       {(error || run?.error || notice) && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={run?.error || error ? "error" : "card flat hint"}>
           {error ?? run?.error ?? notice}
-          {run?.error && /key|Key|401/.test(run.error) && (
+          {run?.error && /key|Key|401|钥匙/.test(run.error) && (
             <>
               {" "}
               <button className="btn small plain" onClick={() => go("settings")}>
