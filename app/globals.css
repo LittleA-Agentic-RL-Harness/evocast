@@ -153,8 +153,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .page { padding: calc(52px + var(--s6)) 16px calc(var(--s7) + 64px); min-height: 100dvh; }
 .column { max-width: var(--golden); margin: 0 auto; }
 .wide { max-width: 1000px; margin: 0 auto; }
-.stack { display: grid; gap: var(--s3); }
-.stack-lg { display: grid; gap: var(--s4); }
+.stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); }
+.stack-lg { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
 .row { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .spread { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; }
 .center { text-align: center; }

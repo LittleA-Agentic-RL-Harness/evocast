@@ -310,7 +310,7 @@ function Engine() {
 
       <div className="card stack">
         <div className="spread">
-          <span className="callout secondary">{T(`${episodes.length} 期可学习 · 预估 LLM ≤ $${est.toFixed(2)} · 不消耗 TTS`, `${episodes.length} episodes to learn from · est. LLM ≤ $${est.toFixed(2)} · no TTS`)}</span>
+          <span className="callout secondary">{T(`${episodes.length} 期可学习 · 预估 LLM ≤ $${est.toFixed(2)} · 不消耗 TTS`, `${episodes.length} episode${episodes.length === 1 ? "" : "s"} to learn from · est. LLM ≤ $${est.toFixed(2)} · no TTS`)}</span>
           {running ? (
             <Button onClick={() => abort.current?.abort()}>{T("停止", "Stop")}</Button>
           ) : (

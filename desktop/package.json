@@ -1,7 +1,7 @@
 {
   "name": "evocast-desktop",
   "productName": "Evocast",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Evocast for macOS — runs the whole app (and its API) locally.",
   "author": "LittleA",
   "license": "Apache-2.0",

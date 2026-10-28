@@ -56,8 +56,8 @@ function greeting(lang: Lang, tone: string, name?: string): { hi: string; sub: s
   const part = lang === "zh" ? (h < 5 ? "夜深了" : h < 11 ? "早上好" : h < 13 ? "中午好" : h < 18 ? "下午好" : "晚上好") : h < 5 ? "Still up" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
   const who = name ? (lang === "zh" ? `，${name}` : `, ${name}`) : "";
   const subs: Record<string, [string, string]> = {
-    warm: ["丢给我一篇论文、研报或链接，我把它变成你爱听的几分钟。", "Hand me a paper, report or link — I'll turn it into a few minutes you'll enjoy."],
-    crisp: ["论文、研报、链接。几分钟听懂。", "Papers, reports, links. Understood in minutes."],
+    warm: ["丢给我论文、研报、文档或链接，我把它变成你爱听的几分钟。", "Hand me papers, reports, docs or links — I'll turn them into a few minutes you'll enjoy."],
+    crisp: ["论文、研报、文档、链接。几分钟听懂。", "Papers, reports, docs, links. Understood in minutes."],
     playful: ["今天想消化点什么硬核内容？", "What heavy reading shall we make light today?"],
   };
   const [zh, en] = subs[tone] ?? subs.warm;

@@ -17,6 +17,7 @@ function useT(): T {
   return useCallback((a: string, b: string) => (zh ? a : b), [zh]);
 }
 
+const people = (n: number) => `${fmtN(n)} ${n === 1 ? "person" : "people"}`;
 const fmtN = (n: number) => (n >= 10_000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : Math.round(n).toLocaleString());
 const pct = (a: number, b: number) => (b > 0 ? `${Math.round((a / b) * 100)}%` : "—");
 const fmtDur = (sec: number) => (sec >= 3600 ? `${(sec / 3600).toFixed(1)} h` : sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.round(sec)} s`);
@@ -68,6 +69,7 @@ function Setup({ T }: { T: T }) {
 }
 
 function Login({ T }: { T: T }) {
+  const input = useRef<HTMLInputElement>(null);
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -79,6 +81,7 @@ function Login({ T }: { T: T }) {
     else {
       setErr(res.status === 429 ? T("尝试太多次，10 分钟后再试。", "Too many attempts. Try again in 10 minutes.") : T("口令不对。", "Wrong password."));
       setBusy(false);
+      requestAnimationFrame(() => input.current?.select());
     }
   }
   return (
@@ -96,7 +99,7 @@ function Login({ T }: { T: T }) {
         }}
       >
         <Key size={16} style={{ color: "var(--label-3)", flex: "none" }} />
-        <input type="password" autoComplete="current-password" autoFocus placeholder={T("管理员口令", "Admin password")} value={pw} onChange={(e) => setPw(e.target.value)} aria-label={T("管理员口令", "Admin password")} />
+        <input ref={input} type="password" autoComplete="current-password" autoFocus placeholder={T("管理员口令", "Admin password")} value={pw} onChange={(e) => setPw(e.target.value)} aria-label={T("管理员口令", "Admin password")} />
         <button className="btn primary small" type="submit" disabled={!pw || busy}>
           {busy ? "…" : T("进入", "Enter")}
         </button>
@@ -324,13 +327,17 @@ function Trend({ T, d }: { T: T; d: Stats }) {
       return { t, v: near !== undefined ? byT.get(near)! : 0 };
     });
   }, [d, metric, hourly]);
-  const H = 250, padL = 34, padB = 22, padT = 8;
+  const H = 300, padL = 34, padB = 22, padT = 8;
   const max = Math.max(1, ...points.map((p) => p.v));
   const nice = max <= 4 ? 4 : Math.ceil(max / Math.pow(10, Math.floor(Math.log10(max)))) * Math.pow(10, Math.floor(Math.log10(max)));
   const x = (i: number) => padL + (i / Math.max(1, points.length - 1)) * (w - padL - 4);
   const y = (v: number) => padT + (1 - v / nice) * (H - padT - padB);
   const line = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
   const area = `${line}L${x(points.length - 1)},${y(0)}L${x(0)},${y(0)}Z`;
+  // The last bucket is still filling up: draw it dashed so a partial day never reads as a drop.
+  const n = points.length;
+  const settled = n > 1 ? points.slice(0, -1).map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join("") : line;
+  const partial = n > 1 ? `M${x(n - 2).toFixed(1)},${y(points[n - 2].v).toFixed(1)}L${x(n - 1).toFixed(1)},${y(points[n - 1].v).toFixed(1)}` : "";
   const label = (t: Date) => (hourly ? `${t.getHours()}:00` : `${t.getMonth() + 1}/${t.getDate()}`);
   const ticks = [0, 0.5, 1].map((f) => Math.round(nice * f));
   const xs = points.length > 1 ? [0, Math.round((points.length - 1) / 3), Math.round(((points.length - 1) * 2) / 3), points.length - 1] : [0];
@@ -371,7 +378,8 @@ function Trend({ T, d }: { T: T; d: Stats }) {
             </text>
           ))}
           <path d={area} fill="url(#trend-fill)" />
-          <path d={line} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          <path d={settled} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          {partial && <path d={partial} fill="none" stroke="var(--accent)" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" />}
           {hover !== null && (
             <g>
               <line x1={x(hover)} x2={x(hover)} y1={padT} y2={y(0)} stroke="var(--label-4)" strokeDasharray="3 3" />
@@ -383,6 +391,7 @@ function Trend({ T, d }: { T: T; d: Stats }) {
           <div className="tip" style={{ left: Math.min(Math.max(x(hover) - 50, 0), w - 120), top: -6 }}>
             <b>{points[hover].v.toLocaleString()}</b>
             {names[metric]} · {hourly ? `${points[hover].t.getMonth() + 1}/${points[hover].t.getDate()} ${label(points[hover].t)}` : label(points[hover].t)}
+            {hover === n - 1 ? T(" · 进行中", " · so far") : ""}
           </div>
         )}
       </div>
@@ -567,7 +576,7 @@ function Imports({ T, d }: { T: T; d: Stats }) {
         </div>
       </Card>
       <Card title={T("导入的链接", "Imported links")} hint={T("公开链接（不含查询参数）", "Public links (query strings removed)")}>
-        <BarList empty={T("还没有人导入链接", "No links imported yet")} items={(d.imports.urls as { url: string; n: number; visitors: number }[]).map((r) => ({ label: shortUrl(r.url), n: r.n, sub: T(`${r.visitors} 人`, `${r.visitors} people`), href: r.url, title: r.url }))} />
+        <BarList empty={T("还没有人导入链接", "No links imported yet")} items={(d.imports.urls as { url: string; n: number; visitors: number }[]).map((r) => ({ label: shortUrl(r.url), n: r.n, sub: T(`${r.visitors} 人`, people(r.visitors)), href: r.url, title: r.url }))} />
       </Card>
     </div>
   );
@@ -579,7 +588,7 @@ function Behavior({ T, d }: { T: T; d: Stats }) {
   return (
     <div className="grid2">
       <Card title={T("页面", "Screens")} hint={T("每个页面被打开的次数", "How often each screen is opened")}>
-        <BarList empty="—" items={(d.behavior.views as { v: string; n: number; visitors: number }[]).map((r) => ({ label: viewName[r.v] ?? r.v, n: r.n, sub: T(`${r.visitors} 人`, `${r.visitors} people`) }))} />
+        <BarList empty="—" items={(d.behavior.views as { v: string; n: number; visitors: number }[]).map((r) => ({ label: viewName[r.v] ?? r.v, n: r.n, sub: T(`${r.visitors} 人`, people(r.visitors)) }))} />
       </Card>
       <Card title={T("点击", "Clicks")} hint={T("全站点击埋点：控件、所在页面、人数", "Every click: control, screen, people")}>
         {clicks.length ? (
@@ -693,7 +702,7 @@ function Audience({ T, d, onPick }: { T: T; d: Stats; onPick: (k: keyof Seg, v: 
 function Errors({ T, d }: { T: T; d: Stats }) {
   return (
     <Card title={T("前端报错", "Client errors")}>
-      <BarList empty="" items={(d.errors as { m: string; n: number; visitors: number }[]).map((r) => ({ label: <span className="mono">{r.m}</span>, n: r.n, sub: T(`${r.visitors} 人`, `${r.visitors} people`), title: r.m }))} />
+      <BarList empty="" items={(d.errors as { m: string; n: number; visitors: number }[]).map((r) => ({ label: <span className="mono">{r.m}</span>, n: r.n, sub: T(`${r.visitors} 人`, people(r.visitors)), title: r.m }))} />
     </Card>
   );
 }
@@ -711,6 +720,13 @@ interface LiveEvent {
   device: string;
   browser: string;
   vid: string;
+}
+
+/** Time for today's events, date and time for older ones. */
+function when(ts: string): string {
+  const d = new Date(ts);
+  const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString([], { month: "numeric", day: "numeric" })} ${t}`;
 }
 
 function detail(e: LiveEvent): string {
@@ -785,7 +801,7 @@ function Live({ T }: { T: T }) {
             <AnimatePresence initial={false}>
               {rows.map((e) => (
                 <motion.tr key={e.id} initial={{ opacity: 0, backgroundColor: "var(--accent-soft)" }} animate={{ opacity: 1, backgroundColor: "rgba(0,0,0,0)" }} transition={{ duration: 1.2 }}>
-                  <td className="tabular caption" style={{ whiteSpace: "nowrap" }}>{new Date(e.ts).toLocaleTimeString()}</td>
+                  <td className="tabular caption" style={{ whiteSpace: "nowrap" }}>{when(e.ts)}</td>
                   <td className="mono">{e.name}</td>
                   <td className="ellipsis" style={{ maxWidth: 360 }} title={detail(e)}>{detail(e)}</td>
                   <td className="mono caption">{e.vid}</td>
@@ -919,7 +935,7 @@ function Explore({ T, query }: { T: T; query: URLSearchParams }) {
         {err && <div className="error mono">{err}</div>}
         {res && (
           <>
-            <span className="caption">{T(`${res.total} 行 · ${res.ms} ms`, `${res.total} rows · ${res.ms} ms`)}{res.total > res.rows.length ? T("（显示前 2000 行）", " (first 2,000 shown)") : ""}</span>
+            <span className="caption">{T(`${res.total} 行 · ${res.ms} ms`, `${res.total} row${res.total === 1 ? "" : "s"} · ${res.ms} ms`)}{res.total > res.rows.length ? T("（显示前 2000 行）", " (first 2,000 shown)") : ""}</span>
             <div className="scroll-x" style={{ maxHeight: 420 }}>
               <table className="tbl">
                 <thead>

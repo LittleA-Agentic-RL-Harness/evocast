@@ -66,7 +66,7 @@ export default function SettingsView() {
 
       <Voices />
 
-      <Section title={T("外观", "Appearance")}>
+      <Section title={T("通用", "General")}>
         <div className="card list" style={{ padding: "4px 21px" }}>
           <div className="list-row">
             <span className="grow">{T("主题", "Theme")}</span>
@@ -97,7 +97,10 @@ export default function SettingsView() {
         <div className="stack-lg">
           <div className="card list" style={{ padding: "4px 21px" }}>
             <div className="list-row">
-              <span className="grow">{T("共享部署口令", "Shared deployment passcode")}</span>
+              <div className="grow">
+                <div>{T("共享部署口令", "Shared deployment passcode")}</div>
+                <div className="caption">{T("仅当部署者设置了 APP_PASSCODE 并提供服务端 Key 时需要", "Only needed when the deployer set APP_PASSCODE and provides server keys")}</div>
+              </div>
               <input className="field" type="password" style={{ width: 160 }} value={k.passcode ?? ""} onChange={(e) => update({ ...settings, keys: { ...k, passcode: e.target.value || undefined } })} />
             </div>
           </div>
