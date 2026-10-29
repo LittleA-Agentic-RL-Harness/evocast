@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 
 // One owner password in ADMIN_PASSWORD; a signed, HttpOnly session cookie after login.
@@ -9,7 +9,16 @@ const DAYS = 14;
 
 export const adminEnabled = () => (process.env.ADMIN_PASSWORD ?? "").length >= 12;
 
-const key = () => createHmac("sha256", "evocast-admin-session-v1").update(process.env.ADMIN_PASSWORD ?? "").digest();
+// scrypt, not a bare hash: a leaked session cookie must not make the password cheap to guess offline.
+// The first half checks sign-ins, the second signs sessions; derived once per password.
+const derive = (password: string) => scryptSync(password, "evocast-admin-v2", 64);
+let derived: { from: string; bytes: Buffer } | null = null;
+const secret = () => {
+  const from = process.env.ADMIN_PASSWORD ?? "";
+  if (derived?.from !== from) derived = { from, bytes: derive(from) };
+  return derived.bytes;
+};
+const key = () => secret().subarray(32);
 const mac = (s: string) => createHmac("sha256", key()).update(s).digest("base64url");
 const same = (a: string, b: string) => timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
 
@@ -24,7 +33,7 @@ export function verify(token: string | undefined, now = Date.now()): boolean {
   return Boolean(exp && sig) && Number(exp) > now && same(sig, mac(exp));
 }
 
-export const checkPassword = (p: string) => adminEnabled() && same(p, process.env.ADMIN_PASSWORD ?? "");
+export const checkPassword = (p: string) => adminEnabled() && timingSafeEqual(derive(p).subarray(0, 32), secret().subarray(0, 32));
 
 export async function isAdmin(): Promise<boolean> {
   return verify((await cookies()).get(ADMIN_COOKIE)?.value);

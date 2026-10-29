@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { Effort, Usage } from "../types";
 import { llmUsd } from "../harness/cost";
 import type { Meter } from "../server/trial";
+import { assertPublicAddress } from "../server/net";
+import { LLMError } from "./error";
 
 export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
 
@@ -18,14 +20,7 @@ export interface LLMConfig {
   meter?: Meter;
 }
 
-export class LLMError extends Error {
-  constructor(
-    message: string,
-    public status = 502,
-  ) {
-    super(message);
-  }
-}
+export { LLMError } from "./error";
 
 export interface JSONCall<T> {
   system: string;
@@ -49,6 +44,7 @@ export async function callJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ 
     await new Promise((r) => setTimeout(r, 250));
     return { data: call.schema.parse(call.mock()), usage: ZERO("mock") };
   }
+  if (cfg.baseUrl) await assertPublicAddress(new URL(cfg.baseUrl).hostname);
   await cfg.meter?.admit();
   try {
     const out = cfg.provider === "openai" ? await openaiJSON(cfg, call) : await anthropicJSON(cfg, call);

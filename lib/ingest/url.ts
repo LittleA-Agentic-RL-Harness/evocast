@@ -1,4 +1,5 @@
 import { assertPublicUrl } from "../server/keys";
+import { assertPublicAddress } from "../server/net";
 import { LLMError } from "../llm";
 import { extractFile, htmlToText, markdownToText, tidy, type SourceDoc } from "./extract";
 
@@ -15,6 +16,13 @@ export class IngestError extends LLMError {
   ) {
     super(message, status);
   }
+}
+
+/** The URL check plus where its host name actually points; runs before every fetch and redirect hop. */
+async function publicUrl(raw: string): Promise<URL> {
+  const url = assertPublicUrl(raw);
+  await assertPublicAddress(url.hostname);
+  return url;
 }
 
 /** arxiv.org/abs/2610.26770v2 | /pdf/... | /html/... → canonical PDF URL. */
@@ -74,17 +82,17 @@ export async function fetchSource(raw: string): Promise<SourceDoc[]> {
   const titlePromise = arxiv ? arxivTitle(arxiv) : Promise.resolve(null);
   const target = arxiv ? { url: arxiv } : rewrite(original);
   const candidates = [target.url, ...("alts" in target ? (target.alts ?? []) : [])];
-  let url = assertPublicUrl(candidates.shift()!);
+  let url = await publicUrl(candidates.shift()!);
   let res: Response | null = null;
   for (let hop = 0; hop < 10; hop++) {
     res = await fetch(url, { headers: { "user-agent": UA, accept: "text/html,text/markdown,text/plain,application/pdf,*/*;q=0.8" }, redirect: "manual", signal: AbortSignal.timeout(25_000) });
     const loc = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && loc) {
-      url = assertPublicUrl(new URL(loc, url).toString());
+      url = await publicUrl(new URL(loc, url).toString());
       continue;
     }
     if (res.status === 404 && candidates.length) {
-      url = assertPublicUrl(candidates.shift()!);
+      url = await publicUrl(candidates.shift()!);
       continue;
     }
     break;
@@ -102,7 +110,7 @@ export async function fetchSource(raw: string): Promise<SourceDoc[]> {
     const h = htmlToText(new TextDecoder().decode(bytes));
     if (h.text.length < 200) throw new IngestError(h.scripted ? "js_rendered" : "empty", h.scripted ? "This page is built in the browser, so its text can't be fetched. Copy its text, or save the page and drop the .html file here." : "No readable text at that link.");
     docs = [{ name: h.title || url.hostname, text: h.text, kind: "html", removed: [] }];
-  } else if (type.includes("markdown") || /\.(md|markdown)$/i.test(url.pathname) || url.hostname.endsWith("githubusercontent.com")) {
+  } else if (type.includes("markdown") || /\.(md|markdown)$/i.test(url.pathname) || /(?:^|\.)githubusercontent\.com$/.test(url.hostname)) {
     const m = markdownToText(new TextDecoder().decode(bytes));
     docs = [{ name: target.name ?? (m.title || file), text: m.text, kind: "markdown", removed: [] }];
   } else if (type.startsWith("text/") && !type.includes("html")) {
