@@ -11,19 +11,23 @@ export const LLM_PRICES: Record<string, { input: number; output: number }> = {
   mock: { input: 0, output: 0 },
 };
 
+/** "anthropic/claude-opus-5.5" (AI Gateway) → "claude-opus-5-5" (first-party); gateway prices match list prices. */
+export const priceId = (model: string) => model.replace(/^anthropic\//, "").replace(/(\d)\.(\d)/g, "$1-$2");
+
 export function llmUsd(model: string, input: number, output: number, cached = 0, override?: { input: number; output: number }): number {
-  const p = override ?? LLM_PRICES[model];
+  const p = override ?? LLM_PRICES[priceId(model)];
   if (!p) return 0;
   return ((input - cached) * p.input + cached * p.input * 0.1 + output * p.output) / 1e6;
 }
 
 /**
- * TTS cost at ElevenLabs pay-as-you-go API rates. `multiplier` lets a user on a
+ * TTS cost at ElevenLabs pay-as-you-go API rates (or AI Gateway's rates for the free trial). `multiplier` lets a user on a
  * subscription reflect their effective rate (Settings → TTS price multiplier).
  * Note: every character counts, including punctuation, spaces and audio tags.
  */
-export function ttsUsd(model: string, chars: number, multiplier = 1): number {
-  return (chars * (modelInfo(model)?.usdPer1k ?? 0.08) * multiplier) / 1000;
+export function ttsUsd(model: string, chars: number, multiplier = 1, gateway = false): number {
+  const m = modelInfo(model);
+  return (chars * ((gateway ? m?.gatewayUsdPer1k : m?.usdPer1k) ?? 0.08) * multiplier) / 1000;
 }
 
 export function estimateSeconds(chars: number, lang: Lang, charsPerMinute: Record<Lang, number>): number {

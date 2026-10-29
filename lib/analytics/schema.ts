@@ -8,7 +8,7 @@ export type Props = Record<string, string | number | boolean | null | string[]>;
 /** The product funnel, in order. A visitor reaches step k only after reaching every step before it. */
 export const FUNNEL = [
   { key: "visit", zh: "访问", en: "Visit", where: "name = 'session_start'" },
-  { key: "ready", zh: "设好钥匙或演示", en: "Keys or demo", where: "name in ('keys_saved','demo_start') or (name = 'session_start' and props->>'onboarded' = 'true')" },
+  { key: "ready", zh: "设好钥匙或开始试用", en: "Keys or trial", where: "name in ('keys_saved','trial_start','demo_start') or (name = 'session_start' and props->>'onboarded' = 'true')" },
   { key: "import", zh: "导入材料", en: "Import", where: "name = 'import_ok'" },
   { key: "create", zh: "点击生成", en: "Create", where: "name = 'generate_start'" },
   { key: "episode", zh: "节目生成", en: "Episode ready", where: "name = 'generate_ok'" },

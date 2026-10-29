@@ -3,6 +3,7 @@
 
 import type { DB, Row } from "../server/db";
 import { FUNNEL, type EventRow } from "./schema";
+import { trialSpend } from "../server/trial";
 
 const SCHEMA = [
   `create table if not exists events (
@@ -127,7 +128,8 @@ export async function stats(db: DB, f: Filter) {
   const funnelCols = FUNNEL.map((s, i) => `bool_or(${s.where}) s${i}`).join(", ");
   const funnelSel = FUNNEL.map((_, i) => `count(*) filter (where ${Array.from({ length: i + 1 }, (_, j) => `s${j}`).join(" and ")}) f${i}`).join(", ");
 
-  const [now, before, trend, funnel, ttfe, sources, referrers, campaigns, landing, imports, importTypes, importUrls, importFails, views, clicks, gen, genDims, genFails, listening, outputs, audience, errors] = await Promise.all([
+  const [trial, now, before, trend, funnel, ttfe, sources, referrers, campaigns, landing, imports, importTypes, importUrls, importFails, views, clicks, gen, genDims, genFails, listening, outputs, audience, errors] = await Promise.all([
+    trialSpend(db, f.since, f.until),
     kpis(db, f),
     kpis(db, prev),
     q(
@@ -178,7 +180,7 @@ export async function stats(db: DB, f: Filter) {
          coalesce(avg(ev_num(props->>'usd')) filter (where name = 'generate_start'), 0) avg_usd
        from events where name like 'generate_%' and ${RANGE}{scope}`,
     ),
-    q(db, f, `select d.k, d.v, count(*) n from events, lateral (values ('persona', props->>'persona'), ('mode', props->>'mode'), ('style', props->>'style'), ('langs', props->>'langs'), ('minutes', props->>'minutes'), ('prefill', props->>'prefill')) d(k, v) where name = 'generate_start' and ${RANGE} and d.v is not null{scope} group by 1, 2 order by 1, 3 desc`),
+    q(db, f, `select d.k, d.v, count(*) n from events, lateral (values ('persona', props->>'persona'), ('mode', props->>'mode'), ('style', props->>'style'), ('langs', props->>'langs'), ('minutes', props->>'minutes'), ('prefill', props->>'prefill'), ('compute', props->>'compute')) d(k, v) where name = 'generate_start' and ${RANGE} and d.v is not null{scope} group by 1, 2 order by 1, 3 desc`),
     q(db, f, `select coalesce(props->>'stage', '?') stage, left(coalesce(props->>'m', ''), 120) m, count(*) n from events where name = 'generate_fail' and ${RANGE}{scope} group by 1, 2 order by 3 desc limit 12`),
     q(db, f, `select ev_num(props->>'pct')::int pct, count(distinct vid) visitors, count(*) n from events where name = 'listen' and ${RANGE}{scope} group by 1 order by 1`),
     q(db, f, `select name || coalesce(':' || coalesce(props->>'format', props->>'rating'), '') k, count(*) n from events where name in ('download', 'feedback', 'evolve', 'pwa_install') and ${RANGE}{scope} group by 1 order by 2 desc`),
@@ -209,6 +211,7 @@ export async function stats(db: DB, f: Filter) {
     generation: { totals: nums(gen)[0] ?? {}, dims: top(genDims), fails: nums(genFails), listening: nums(listening), outputs: nums(outputs) },
     audience: top(audience, 10),
     errors: nums(errors),
+    trial,
   };
 }
 

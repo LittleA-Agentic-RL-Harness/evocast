@@ -2,7 +2,7 @@
  * ElevenLabs TTS models we support (verified against the ElevenLabs docs, 2026-10).
  * dialogue: uses POST /v1/text-to-dialogue (one multi-speaker request per chunk);
  * otherwise each line goes through POST /v1/text-to-speech/{voice_id}.
- * usdPer1k: pay-as-you-go API price per 1,000 characters.
+ * usdPer1k: pay-as-you-go API price per 1,000 characters; gateway: the same model on Vercel AI Gateway (free trial).
  */
 export const TTS_MODELS = ["eleven_v4", "eleven_v3", "eleven_v4_turbo", "eleven_multilingual_v2", "eleven_flash_v2_5"] as const;
 export type TtsModel = (typeof TTS_MODELS)[number];
@@ -13,14 +13,16 @@ export interface TtsModelInfo {
   tags: boolean;
   languageCode: boolean;
   usdPer1k: number;
+  gateway?: string;
+  gatewayUsdPer1k?: number;
 }
 
 export const TTS_MODEL_INFO: Record<TtsModel, TtsModelInfo> = {
-  eleven_v4: { label: "Eleven v4 · dialogue (best)", dialogue: true, tags: true, languageCode: true, usdPer1k: 0.08 },
-  eleven_v3: { label: "Eleven v3 · dialogue", dialogue: true, tags: true, languageCode: true, usdPer1k: 0.08 },
-  eleven_v4_turbo: { label: "Eleven v4 Turbo · per line (fast)", dialogue: false, tags: true, languageCode: true, usdPer1k: 0.04 },
-  eleven_multilingual_v2: { label: "Multilingual v2 · per line", dialogue: false, tags: false, languageCode: false, usdPer1k: 0.08 },
-  eleven_flash_v2_5: { label: "Flash v2.5 · per line (cheapest)", dialogue: false, tags: false, languageCode: true, usdPer1k: 0.04 },
+  eleven_v4: { label: "Eleven v4 · dialogue (best)", dialogue: true, tags: true, languageCode: true, usdPer1k: 0.08, gateway: "elevenlabs/eleven-v4", gatewayUsdPer1k: 0.04 },
+  eleven_v3: { label: "Eleven v3 · dialogue", dialogue: true, tags: true, languageCode: true, usdPer1k: 0.08, gateway: "elevenlabs/eleven-v3", gatewayUsdPer1k: 0.04 },
+  eleven_v4_turbo: { label: "Eleven v4 Turbo · per line (fast)", dialogue: false, tags: true, languageCode: true, usdPer1k: 0.04, gateway: "elevenlabs/eleven-v4-turbo", gatewayUsdPer1k: 0.02 },
+  eleven_multilingual_v2: { label: "Multilingual v2 · per line", dialogue: false, tags: false, languageCode: false, usdPer1k: 0.08, gateway: "elevenlabs/eleven-multilingual-v2", gatewayUsdPer1k: 0.04 },
+  eleven_flash_v2_5: { label: "Flash v2.5 · per line (cheapest)", dialogue: false, tags: false, languageCode: true, usdPer1k: 0.04, gateway: "elevenlabs/eleven-flash-v2.5", gatewayUsdPer1k: 0.02 },
 };
 
 /** ElevenLabs recommends ≤2,000 characters per Text-to-Dialogue request; stay under it. */

@@ -6,14 +6,14 @@ Thanks for helping make long reads listenable. Evocast is small on purpose — p
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000 — choose "demo mode" to run without any keys
+npm run dev          # http://localhost:3000 — without keys the welcome screen offers the offline demo
 npm test             # unit tests (node:test via tsx)
 npm run typecheck
 npm run build
 ```
 
 Append `?still` to any URL to render animations at their end state (handy for screenshots and automated checks).
-`desktop/` is the macOS app (Electron) — see the README.
+`desktop/` is the macOS app (Electron) — see the README. To try the free trial locally, connect a Postgres in `.env.development.local` and pull a Gateway token with `vercel env pull` (it lasts 12 hours).
 
 ## Where things live
 
@@ -22,7 +22,8 @@ Append `?still` to any URL to render animations at their end state (handy for sc
 | Content harness (genome, prompts, fixed tests, Pareto selection) | `lib/harness/` |
 | Interface harness (prefill, disclosure, portrait) | `lib/harness/ui.ts`, `prefill.ts`, `portrait.ts` |
 | Server pipeline & evolution agents | `lib/server/pipeline.ts`, `app/api/*` |
-| ElevenLabs integration | `lib/tts/` |
+| ElevenLabs integration (direct and via AI Gateway) | `lib/tts/` |
+| Free trial, analytics, admin | `lib/server/trial.ts`, `lib/analytics/`, `components/admin/` |
 | UI (Apple-style design system) | `components/ui/`, `components/app/`, `app/globals.css` |
 
 ## Guidelines

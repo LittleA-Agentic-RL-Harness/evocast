@@ -1,8 +1,9 @@
 // Evocast visual capture rig (Electron, offscreen).
 //   desktop/node_modules/.bin/electron scripts/capture/capture.mjs [stills|record|all]
-// Requires the dev server on http://localhost:3000. Drives the real UI in demo mode,
-// seeds episodes from real arXiv papers, then writes retina stills and a demo
-// recording to docs/assets/ (frames → ffmpeg → GIF + MP4).
+// Requires the dev server on http://localhost:3000. Drives the real UI on the free trial
+// (real models and voices; the dev server needs a Gateway token and a database), seeds
+// episodes from real arXiv papers, then writes retina stills and a walkthrough to
+// docs/assets/ (frames → ffmpeg → GIF + MP4). CAPTURE_PROVIDER=mock captures the offline demo.
 import { app, BrowserWindow, nativeTheme } from "electron";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -12,6 +13,9 @@ const BASE = process.env.EVOCAST_URL ?? "http://localhost:3000";
 const OUT = join(process.cwd(), "docs", "assets");
 const FRAMES = join(process.cwd(), ".capture-frames");
 const mode = process.argv[2] ?? "all";
+const PROVIDER = process.env.CAPTURE_PROVIDER ?? "hosted";
+// Real generation takes minutes, not milliseconds.
+const GEN_MS = PROVIDER === "mock" ? 60_000 : 480_000;
 mkdirSync(OUT, { recursive: true });
 
 const SOURCES = [
@@ -59,7 +63,7 @@ async function shot(bw, name) {
 async function setSettings(bw, patch) {
   if (!bw.webContents.getURL().startsWith("http")) await bw.loadURL(BASE + "/?still");
   await run(bw, `const k = "evocast-settings"; const s = JSON.parse(localStorage.getItem(k) || "{}");
-    localStorage.setItem(k, JSON.stringify({ keys: { llmProvider: "mock" }, uiLang: "zh", ttsOverride: {}, ttsMultiplier: 1, voiceOverrides: {}, ...s, onboarded: true, ...${JSON.stringify(patch)} }));`);
+    localStorage.setItem(k, JSON.stringify({ keys: { llmProvider: ${JSON.stringify(PROVIDER)} }, uiLang: "zh", ttsOverride: {}, ttsMultiplier: 1, voiceOverrides: {}, ...s, onboarded: true, ...${JSON.stringify(patch)} }));`);
 }
 
 /** Create demo episodes through the real UI from real arXiv papers. */
@@ -70,10 +74,11 @@ async function seed(bw) {
       await run(bw, `const h = window.__h; const input = await h.waitFor(() => document.querySelector(".paste input"));
         h.setInput(input, ${JSON.stringify(s.url)}); await h.sleep(100); input.closest("form").requestSubmit();
         await h.waitFor(() => document.querySelectorAll(".token").length === 4, 40000);
-        await h.waitFor(() => !document.querySelector(".reason")?.textContent.includes("正在"), 20000);
+        await h.waitFor(() => !document.querySelector(".reason")?.textContent.includes("正在"), 60000);
         await h.token(0, ${JSON.stringify(s.persona)}); await h.token(2, ${JSON.stringify(s.lang)}); await h.token(3, ${JSON.stringify(s.style)});
         await h.click("生成");
-        await h.waitFor(() => document.querySelector(".sheet"), 60000);`);
+        await h.waitFor(() => document.querySelector(".sheet"), ${GEN_MS});
+        document.querySelector("audio")?.pause();`);
       console.log("  seeded", s.url);
     } catch (e) {
       console.log("  skipped", s.url, String(e).slice(0, 120));
@@ -94,7 +99,7 @@ async function seed(bw) {
     }
     await h.click("你"); await h.sleep(600);
     await h.click("进化一轮");
-    await h.waitFor(() => document.querySelector(".log")?.textContent.includes("Stage 5"), 120000);
+    await h.waitFor(() => document.querySelector(".log")?.textContent.includes("Stage 5"), ${GEN_MS * 2});
     await h.sleep(2500);`);
   console.log("  evolved");
 }
@@ -107,7 +112,7 @@ async function stills(bw, theme) {
   await run(bw, `const h = window.__h; const input = await h.waitFor(() => document.querySelector(".paste input"));`);
   await shot(bw, `home-empty-${t}`);
   await run(bw, `const h = window.__h; const input = document.querySelector(".paste input"); h.setInput(input, "https://arxiv.org/abs/2610.26770"); await h.sleep(100); input.closest("form").requestSubmit();
-    await h.waitFor(() => document.querySelectorAll(".token").length === 4, 40000); await h.waitFor(() => !document.querySelector(".reason")?.textContent.includes("正在"), 20000);
+    await h.waitFor(() => document.querySelectorAll(".token").length === 4, 40000); await h.waitFor(() => !document.querySelector(".reason")?.textContent.includes("正在"), 60000);
     document.querySelector(".disclosure, details"); [...document.querySelectorAll("button")].find((b) => b.textContent.trim().startsWith("细调"))?.click(); await h.sleep(400);
     window.scrollTo(0, 0);`);
   await shot(bw, `home-recipe-${t}`);
@@ -136,6 +141,9 @@ async function onboarding(theme) {
   nativeTheme.themeSource = theme;
   const bw = win(`capture-onboard-${theme}-${Date.now()}`, 1440, 900, 2);
   await load(bw, "/?still", 2);
+  // A fresh visitor follows the browser's language; the README shows the Chinese UI.
+  await run(bw, `localStorage.setItem("evocast-settings", JSON.stringify({ keys: { llmProvider: "anthropic" }, uiLang: "zh", ttsOverride: {}, ttsMultiplier: 1, voiceOverrides: {}, theme: ${JSON.stringify(theme)} }));`);
+  await load(bw, "/?still", 2);
   await shot(bw, `welcome-${theme}`);
   await run(bw, `const h = window.__h; await h.click("开始"); await h.sleep(600);
     const input = await h.waitFor(() => document.querySelector("input[type=password]")); h.setInput(input, "sk-0123456789abcdef0123456789abcdef"); await h.sleep(2500);`);
@@ -151,18 +159,29 @@ async function record() {
   const bw = win(`capture-rec-${Date.now()}`, 1280, 800, 1);
   const frames = [];
   let recording = false;
+  // Time spent paused (waiting on real generation) is cut from the video.
+  let paused = 0;
+  let pausedAt = 0;
   bw.webContents.on("paint", (_e, _dirty, image) => {
     if (!recording) return;
     const f = join(FRAMES, `f${String(frames.length).padStart(5, "0")}.png`);
     writeFileSync(f, image.toPNG());
-    frames.push({ f, t: Date.now() });
+    frames.push({ f, t: Date.now() - paused });
   });
+  const pause = () => {
+    recording = false;
+    pausedAt = Date.now();
+  };
+  const resume = () => {
+    paused += Date.now() - pausedAt;
+    recording = true;
+  };
   await load(bw, "/", 1);
-  await run(bw, `localStorage.setItem("evocast-settings", JSON.stringify({ keys: { llmProvider: "mock" }, uiLang: "zh", ttsOverride: {}, ttsMultiplier: 1, voiceOverrides: {}, theme: "dark", onboarded: false }));`);
+  await run(bw, `localStorage.setItem("evocast-settings", JSON.stringify({ keys: { llmProvider: "anthropic" }, uiLang: "zh", ttsOverride: {}, ttsMultiplier: 1, voiceOverrides: {}, theme: "dark", onboarded: false }));`);
   await load(bw, "/", 1);
   recording = true;
   await sleep(1800);
-  await run(bw, `const h = window.__h; await h.click("先看看演示"); await h.sleep(1600);
+  await run(bw, `const h = window.__h; await h.click(${JSON.stringify(PROVIDER === "mock" ? "先看看演示" : "免费试用")}); await h.sleep(1600);
     const input = await h.waitFor(() => document.querySelector(".paste input"));
     for (const ch of "https://arxiv.org/abs/2610.26770") { h.setInput(input, input.value + ch); await h.sleep(28); }
     await h.sleep(400); input.closest("form").requestSubmit();
@@ -171,11 +190,13 @@ async function record() {
     document.querySelectorAll(".token")[0].click(); await h.sleep(1100);
     [...document.querySelectorAll(".menu-item")].find((m) => m.textContent.startsWith("研究员"))?.click(); await h.sleep(1100);
     document.querySelectorAll(".token")[2].click(); await h.sleep(1000);
-    [...document.querySelectorAll(".menu-item")].find((m) => m.textContent.startsWith("中英双语"))?.click(); await h.sleep(1300);
-    await h.click("生成");
-    await h.waitFor(() => document.querySelector(".sheet"), 60000); await h.sleep(3200);
-    document.querySelector(".scrim")?.click(); await h.sleep(1400);
-    await h.click("你"); await h.sleep(3200);`);
+    [...document.querySelectorAll(".menu-item")].find((m) => m.textContent.startsWith("中文"))?.click(); await h.sleep(1300);
+    await h.click("生成"); await h.sleep(4200);`);
+  pause();
+  await run(bw, `const h = window.__h; await h.waitFor(() => document.querySelector(".sheet"), ${GEN_MS});`);
+  resume();
+  await run(bw, `const h = window.__h; await h.sleep(5200);
+    document.querySelector(".scrim")?.click(); await h.sleep(3200);`);
   recording = false;
   bw.destroy();
   if (frames.length < 10) throw new Error("no frames recorded");

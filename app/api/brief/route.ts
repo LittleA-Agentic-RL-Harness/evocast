@@ -1,6 +1,7 @@
 import { HarnessSchema } from "@/lib/harness/genome";
 import { makeBrief } from "@/lib/server/pipeline";
-import { errorResponse, resolveLLM } from "@/lib/server/keys";
+import { errorResponse, isTrial, resolveLLM } from "@/lib/server/keys";
+import { TRIAL_MAX_CHARS } from "@/lib/server/trial";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -12,7 +13,8 @@ export async function POST(req: Request) {
     if (!body.text || body.text.length < 200) throw new Error("Document text is empty or too short.");
     const h = HarnessSchema.parse(body.harness);
     const t0 = Date.now();
-    const out = await makeBrief(resolveLLM(req), h, body.text, body.lenses ?? [], body.direction ?? "");
+    const text = isTrial(req) ? body.text.slice(0, TRIAL_MAX_CHARS) : body.text;
+    const out = await makeBrief(resolveLLM(req), h, text, body.lenses ?? [], body.direction ?? "");
     return Response.json({ ...out, latencyMs: Date.now() - t0 });
   } catch (e) {
     return errorResponse(e);

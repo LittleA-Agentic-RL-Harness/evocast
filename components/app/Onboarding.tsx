@@ -10,6 +10,7 @@ import { AMBIGUOUS, providerById } from "@/lib/llm/providers";
 import { getProfile, saveProfile, type Settings } from "@/lib/client/store";
 import { modelInfo } from "@/lib/tts/models";
 import { track } from "@/lib/client/track";
+import { getTrial, type Trial } from "@/lib/client/api";
 
 interface LLMResult {
   ok: boolean;
@@ -51,12 +52,16 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<Settings>(settings);
   const [name, setName] = useState<string | null>(null);
+  const [trial, setTrial] = useState<Trial | null>(null);
 
   useEffect(() => track("onboard_step", { step }), [step]);
+  useEffect(() => void getTrial().then(setTrial), []);
 
   const finish = async (s: Settings) => {
-    const demo = s.keys.llmProvider === "mock";
-    track(demo ? "demo_start" : "keys_saved", demo ? {} : { llm: s.keys.llmProviderName ?? s.keys.llmProvider, tts: s.keys.elevenlabsKey ? (s.keys.elevenlabsTier ?? "yes") : "none" });
+    const p = s.keys.llmProvider;
+    if (p === "hosted") track("trial_start", { left: trial?.left ?? null });
+    else if (p === "mock") track("demo_start");
+    else track("keys_saved", { llm: s.keys.llmProviderName ?? p, tts: s.keys.elevenlabsKey ? (s.keys.elevenlabsTier ?? "yes") : "none" });
     if (name) await saveProfile({ ...(await getProfile()), name });
     update({ ...s, onboarded: true });
     await refresh();
@@ -83,8 +88,8 @@ export default function Onboarding() {
                   <Button variant="primary" size="large" magnetic onClick={() => setStep(1)}>
                     {T("开始 · 只需两把钥匙", "Begin · just two keys")}
                   </Button>
-                  <Button variant="plain" onClick={() => finish({ ...draft, keys: { ...draft.keys, llmProvider: "mock" } })}>
-                    {T("先看看演示（无需 Key）", "Try the demo first (no keys)")}
+                  <Button variant="plain" onClick={async () => finish({ ...draft, keys: { ...draft.keys, llmProvider: (trial ?? (await getTrial())).available ? "hosted" : "mock" } })}>
+                    {trial?.available === false ? T("先看看演示（无需 Key）", "Try the demo first (no keys)") : T("免费试用（无需 Key）", "Try it free (no keys)")}
                   </Button>
                 </div>
                 <p className="hint">{T("Key 只保存在这台设备上，不会上传或存储到我们的服务器。", "Keys stay on this device — never uploaded to or stored on our servers.")}</p>
@@ -157,7 +162,7 @@ function KeyField({ value, onChange, placeholder, status }: { value: string; onC
 
 function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraft: (s: Settings) => void; onNext: () => void; onBack: () => void }) {
   const { T } = useApp();
-  const [key, setKey] = useState(draft.keys.llmProvider !== "mock" ? (draft.keys.llmKey ?? "") : "");
+  const [key, setKey] = useState(draft.keys.llmProvider === "mock" || draft.keys.llmProvider === "hosted" ? "" : (draft.keys.llmKey ?? ""));
   const [providerId, setProviderId] = useState<string | undefined>();
   const [res, setRes] = useState<LLMResult | null>(null);
   const [checking, setChecking] = useState(false);

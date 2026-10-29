@@ -1,6 +1,6 @@
 {
   "name": "evocast",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "AI-native podcasts that evolve with you — turn long papers & reports into short, audience-aware two-host episodes, with a self-improving harness (HarnessPro) and an interface that learns you.",
   "scripts": {
@@ -31,11 +31,11 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.12",
-    "@types/node": "^22.20.5",
+    "@types/node": "^24.19.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "tsx": "^4.23.15",
-    "typescript": "~5.9"
+    "typescript": "^7.0.2"
   },
   "license": "Apache-2.0",
   "author": "LittleA (https://github.com/LittleA-Agentic-RL-Harness)",

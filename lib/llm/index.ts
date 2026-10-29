@@ -3,6 +3,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import type { Effort, Usage } from "../types";
 import { llmUsd } from "../harness/cost";
+import type { Meter } from "../server/trial";
 
 export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
 
@@ -13,6 +14,8 @@ export interface LLMConfig {
   model: string;
   /** Optional USD per 1M tokens for providers we don't have prices for. */
   price?: { input: number; output: number };
+  /** Free-trial spend control: checked before and recorded after every call. */
+  meter?: Meter;
 }
 
 export class LLMError extends Error {
@@ -46,8 +49,14 @@ export async function callJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ 
     await new Promise((r) => setTimeout(r, 250));
     return { data: call.schema.parse(call.mock()), usage: ZERO("mock") };
   }
-  if (cfg.provider === "openai") return openaiJSON(cfg, call);
-  return anthropicJSON(cfg, call);
+  await cfg.meter?.admit();
+  try {
+    const out = cfg.provider === "openai" ? await openaiJSON(cfg, call) : await anthropicJSON(cfg, call);
+    await cfg.meter?.record("llm", out.usage.usd, out.usage.inputTokens + out.usage.outputTokens);
+    return out;
+  } catch (e) {
+    throw cfg.meter ? cfg.meter.translate(e) : e;
+  }
 }
 
 async function anthropicJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ data: T; usage: Usage }> {
@@ -97,6 +106,7 @@ async function anthropicJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ da
     if (e instanceof Anthropic.AuthenticationError) throw new LLMError("Anthropic rejected the API key.", 401);
     if (e instanceof Anthropic.RateLimitError) throw new LLMError("Anthropic rate limit — retry in a minute.", 429);
     if (e instanceof Anthropic.BadRequestError) throw new LLMError(`Anthropic bad request: ${e.message}`, 400);
+    if (e instanceof Anthropic.APIError && e.status === 402) throw new LLMError(`Payment or budget limit: ${e.message}`, 402);
     if (e instanceof Anthropic.APIError) throw new LLMError(`Anthropic error ${e.status ?? ""}: ${e.message}`, 502);
     throw new LLMError(`LLM call failed: ${(e as Error).message}`, 502);
   }

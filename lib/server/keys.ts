@@ -1,9 +1,11 @@
 import { DEFAULT_ANTHROPIC_MODEL, LLMError, type LLMConfig } from "../llm";
+import { GATEWAY_URL, gatewayToken, TRIAL_LLM, trialEnabled, trialMeter, type Meter } from "./trial";
 
 /**
  * BYOK: keys arrive per request in headers (stored only in the visitor's browser).
  * If a header key is missing, fall back to the deployment's env keys — gated by
  * APP_PASSCODE when one is configured. Keys are never logged or persisted.
+ * "hosted" is the free trial: Vercel AI Gateway with metered, capped spend (lib/server/trial.ts).
  */
 
 function passcodeOk(req: Request): boolean {
@@ -20,11 +22,12 @@ function envFallback(req: Request, name: string): string | undefined {
 
 export function resolveLLM(req: Request): LLMConfig {
   const h = req.headers;
-  const provider = (h.get("x-llm-provider") ?? "anthropic") as LLMConfig["provider"];
+  const provider = (h.get("x-llm-provider") ?? "anthropic") as LLMConfig["provider"] | "hosted";
   const price = h.get("x-llm-price");
   const parsedPrice = price ? (JSON.parse(price) as { input: number; output: number }) : undefined;
 
   if (provider === "mock") return { provider, model: "mock" };
+  if (provider === "hosted") return { provider: "anthropic", ...trial(req), baseUrl: GATEWAY_URL, model: TRIAL_LLM };
   if (provider === "openai") {
     const baseUrl = h.get("x-llm-base-url") || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
     assertPublicUrl(baseUrl);
@@ -46,6 +49,16 @@ export function resolveLLM(req: Request): LLMConfig {
     price: parsedPrice,
   };
 }
+
+function trial(req: Request): { apiKey: string; meter: Meter } {
+  if (!trialEnabled(req)) throw new LLMError("The free trial isn't offered on this deployment. Add your own keys in Settings.", 503);
+  return { apiKey: gatewayToken(req)!, meter: trialMeter(req) };
+}
+
+export const isTrial = (req: Request) => req.headers.get("x-llm-provider") === "hosted";
+
+/** Speech for the trial: the gateway token plus its meter. */
+export const resolveTrialSpeech = (req: Request) => trial(req);
 
 export function resolveElevenKey(req: Request): string | undefined {
   if (req.headers.get("x-llm-provider") === "mock" && !req.headers.get("x-el-key")) return undefined;
@@ -71,5 +84,6 @@ export function assertPublicUrl(raw: string): URL {
 export function errorResponse(e: unknown): Response {
   const status = e instanceof LLMError ? e.status : 500;
   const message = e instanceof Error ? e.message : String(e);
-  return Response.json({ error: message }, { status });
+  const code = (e as { code?: unknown })?.code;
+  return Response.json({ error: message, ...(typeof code === "string" ? { code } : {}) }, { status });
 }

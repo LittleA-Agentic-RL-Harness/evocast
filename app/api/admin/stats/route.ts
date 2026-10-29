@@ -2,12 +2,14 @@ import { getDB } from "@/lib/server/db";
 import { guard, PRIVATE } from "@/lib/server/admin";
 import { stats, type Stats } from "@/lib/analytics/server";
 import { parseFilter } from "@/lib/analytics/filter";
+import { gatewayBalance, trialEnabled } from "@/lib/server/trial";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 // Dashboards are opened in bursts; 30 s of reuse keeps the database idle between them.
-const cache = new Map<string, { at: number; data: Stats }>();
+export type AdminStats = Stats & { gateway: { trial: boolean; balance: { balance: number; used: number } | null } };
+const cache = new Map<string, { at: number; data: AdminStats }>();
 
 export async function GET(req: Request) {
   const denied = await guard();
@@ -19,7 +21,8 @@ export async function GET(req: Request) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < 30_000 && !url.searchParams.has("fresh")) return Response.json(hit.data, { headers: PRIVATE });
   try {
-    const data = await stats(db, parseFilter(url));
+    const [s, balance] = await Promise.all([stats(db, parseFilter(url)), gatewayBalance(req)]);
+    const data: AdminStats = { ...s, gateway: { trial: trialEnabled(req), balance } };
     if (cache.size > 50) cache.clear();
     cache.set(key, { at: Date.now(), data });
     return Response.json(data, { headers: PRIVATE });
