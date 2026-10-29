@@ -32,8 +32,30 @@ All variables are listed in [`.env.example`](../.env.example).
 - **Cost is mostly waiting.** On Fluid compute, functions are billed for active CPU and provisioned memory. Time spent waiting on a model or voice call doesn't count as CPU, and that waiting is most of what Evocast's functions do.
 - **4.5 MB request bodies.** Files are parsed in the browser, and combined sources are capped at 900k characters, so requests stay below this limit.
 - **One region.** Functions run in `iad1`, the same region as the database.
-- **Abuse.** Trial spend is capped whatever happens. Still, someone rotating IP addresses could use up the site's daily trial allowance and close the trial for everyone until midnight UTC. Before announcing widely, add a Vercel Firewall rate‑limit rule (or BotID) on `/api/brief`, `/api/script`, `/api/tts`, `/api/prefill`, `/api/evolve` and `/api/music`.
+- **Abuse.** Trial spend is capped whatever happens, and the Firewall rate limits below stop floods from any one address. Someone rotating IP addresses could still use up the site's daily trial allowance and close the trial for everyone until midnight UTC; if trial traffic starts to look automated, BotID is the next layer.
 - **Mainland China.** `*.vercel.app` is often unreachable from mainland China. Serve Chinese visitors from a custom domain.
+
+### Rate limits
+
+The official deployment runs three Vercel Firewall rules. Each counts requests per IP over a fixed window and answers `429` past the limit; the app then says "Too many requests in a short time. Wait a minute and try again."
+
+| Rule | Matches | Limit |
+|---|---|---|
+| Work routes per IP | `POST` to `/api/brief`, `script`, `tts`, `prefill`, `evolve`, `music`, `ingest`, `voices`, `clone` | 60 a minute; one person generating peaks at about 15 |
+| Analytics collector per IP | `POST /api/e` | 120 a minute; the client sends a batch at most every 4 s |
+| Admin login per IP | `POST /api/admin/login` | 10 per 10 minutes, on top of the app's own throttle |
+
+To set up the first rule on your own project (Hobby allows one rate‑limit rule; Pro allows 40):
+
+```bash
+vercel firewall rules add "Work routes per IP" \
+  --condition '{"type":"method","op":"eq","value":"POST"}' \
+  --condition '{"type":"path","op":"inc","value":["/api/brief","/api/script","/api/tts","/api/prefill","/api/evolve","/api/music","/api/ingest","/api/voices","/api/clone"]}' \
+  --action rate_limit --rate-limit-window 60 --rate-limit-requests 60 --rate-limit-keys ip --yes
+vercel firewall publish --yes
+```
+
+Counters are kept per region. The first million allowed requests a month are included; these rules see only generation, event and sign‑in requests, so the volume stays small.
 
 ## Compute: Vercel AI Gateway
 
@@ -110,6 +132,7 @@ The Neon Free plan includes 1 GB of storage, 100 CU‑hours a month and 5 GB of 
 | `402` in logs | Gateway → Budgets, credit balance | top up, enable auto top‑up, or raise the budget |
 | Voice step fails | Admin → Generation → Failures; Vercel logs for `/api/tts` | transient errors retry on their own; a voice id that keeps failing was withdrawn, so swap it |
 | Analytics stopped | Neon console usage | upgrade from Free, or wait for the next period |
+| Real visitors see "Too many requests" | Vercel → Firewall, traffic for the rule | many people share one address (an office, a campus): raise the limit with `vercel firewall rules edit "Work routes per IP" --rate-limit-requests 120 --yes`, then `vercel firewall publish --yes` |
 | Admin locked out | — | set a new `ADMIN_PASSWORD` and redeploy |
 
 ## Before announcing
@@ -118,5 +141,5 @@ The Neon Free plan includes 1 GB of storage, 100 CU‑hours a month and 5 GB of 
 - [ ] Custom domain, for mainland China
 - [ ] Gateway auto top‑up, and caps sized to the launch
 - [ ] Neon Launch plan
-- [ ] Firewall rate‑limit rule or BotID on the generation routes
+- [ ] Firewall rate limits (see [Rate limits](#rate-limits)); BotID if trial traffic looks automated
 - [ ] Social preview uploaded (GitHub → Settings → Social preview: `docs/assets/social-preview.jpg`)

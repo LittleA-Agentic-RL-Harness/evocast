@@ -32,8 +32,30 @@ flowchart LR
 - **费用主要花在等待上。** Fluid compute 按实际 CPU 时间和内存时间计费，等大模型、等语音的时间不算 CPU，而 Evocast 的函数大部分时间都在等。
 - **请求体上限 4.5 MB。** 文件在浏览器里解析，合并后的材料最多 90 万字，所以不会超过这个上限。
 - **单一区域。** 函数在 `iad1`，和数据库同区。
-- **防刷。** 无论如何，试用花费都有上限。但有人换着 IP 刷，可以把全站当天的试用额度用光，让所有人在 UTC 零点前都用不了试用。大规模推广前，建议给 `/api/brief`、`/api/script`、`/api/tts`、`/api/prefill`、`/api/evolve`、`/api/music` 加一条 Vercel Firewall 限流规则（或启用 BotID）。
+- **防刷。** 无论如何，试用花费都有上限；下面的 Firewall 限流规则能挡住来自单个地址的大量请求。但有人换着 IP 刷，仍然可以把全站当天的试用额度用光，让所有人在 UTC 零点前都用不了试用。如果试用流量看起来像机器刷的，下一步是启用 BotID。
 - **中国大陆。** `*.vercel.app` 在中国大陆经常打不开，面向中文用户需要绑定自己的域名。
+
+### 限流
+
+官方部署配了三条 Vercel Firewall 规则，都按 IP 在固定时间窗口内计数，超过上限返回 `429`，应用里显示「请求太频繁了，等一分钟再试。」
+
+| 规则 | 匹配 | 上限 |
+|---|---|---|
+| Work routes per IP | 对 `/api/brief`、`script`、`tts`、`prefill`、`evolve`、`music`、`ingest`、`voices`、`clone` 的 `POST` | 每分钟 60 次；一个人生成节目时最多约 15 次 |
+| Analytics collector per IP | `POST /api/e` | 每分钟 120 次；客户端最快每 4 秒发一批 |
+| Admin login per IP | `POST /api/admin/login` | 每 10 分钟 10 次，在应用自身的限制之外再加一层 |
+
+在自己的项目上配置第一条规则（Hobby 只能有一条限流规则，Pro 最多 40 条）：
+
+```bash
+vercel firewall rules add "Work routes per IP" \
+  --condition '{"type":"method","op":"eq","value":"POST"}' \
+  --condition '{"type":"path","op":"inc","value":["/api/brief","/api/script","/api/tts","/api/prefill","/api/evolve","/api/music","/api/ingest","/api/voices","/api/clone"]}' \
+  --action rate_limit --rate-limit-window 60 --rate-limit-requests 60 --rate-limit-keys ip --yes
+vercel firewall publish --yes
+```
+
+计数按区域分别进行。每月前 100 万次放行请求免费；这些规则只匹配生成、埋点和后台登录请求，量很小。
 
 ## 算力：Vercel AI Gateway
 
@@ -110,6 +132,7 @@ Neon 免费档包含 1 GB 存储、每月 100 CU 小时计算和 5 GB 出站流�
 | 日志里出现 `402` | Gateway → Budgets，以及额度余额 | 充值、开自动充值，或提高预算 |
 | 配音失败 | 后台 → 生成 → 失败原因；Vercel 日志里的 `/api/tts` | 偶发错误会自动重试；某个声音 id 持续失败，说明已被下架，换掉它 |
 | 埋点停了 | Neon 控制台的用量 | 从免费档升级，或等到下个周期 |
+| 真实访客看到「请求太频繁了」 | Vercel → Firewall 里这条规则的流量 | 很多人共用一个出口地址（公司、校园）：用 `vercel firewall rules edit "Work routes per IP" --rate-limit-requests 120 --yes` 调高上限，再运行 `vercel firewall publish --yes` |
 | 后台登录不了 | — | 设置新的 `ADMIN_PASSWORD` 并重新部署 |
 
 ## 公开推广前
@@ -118,5 +141,5 @@ Neon 免费档包含 1 GB 存储、每月 100 CU 小时计算和 5 GB 出站流�
 - [ ] 绑定自己的域名，给中国大陆访客用
 - [ ] 打开 Gateway 自动充值，按推广规模调好上限
 - [ ] Neon 升级到 Launch
-- [ ] 给生成相关接口加 Firewall 限流规则或 BotID
+- [ ] Firewall 限流规则（见[限流](#限流)）；试用流量像机器刷的，再启用 BotID
 - [ ] 上传社交预览图（GitHub → Settings → Social preview：`docs/assets/social-preview.jpg`）
