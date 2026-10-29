@@ -97,7 +97,7 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
       };
       const voice = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk.lines, voices: voiceIds, model: ttsModel, lang, context }, headers, signal);
       // One retry per chunk: a transient provider error shouldn't throw away the script already paid for.
-      const r = await voice().catch((e) => (signal?.aborted || (e instanceof ApiError && e.code?.startsWith("trial")) ? Promise.reject(e) : voice()));
+      const r = await voice().catch((e) => (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || e.code === "rate_limited")) ? Promise.reject(e) : voice()));
       const bytes = stripMp3Headers(Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0)));
       if (ci === 0 && sting && sameFormat(sting, bytes)) {
         parts.push(stripMp3Headers(sting));

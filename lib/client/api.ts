@@ -28,12 +28,14 @@ async function fail(res: Response, fallback: string): Promise<never> {
   let msg = fallback;
   let code: string | undefined;
   try {
-    const j = (await res.json()) as { error?: string; code?: string };
-    msg = j.error ?? msg;
+    const j = (await res.json()) as { error?: unknown; code?: string };
+    if (typeof j.error === "string") msg = j.error;
     code = j.code;
   } catch {
     /* not JSON */
   }
+  // The Vercel Firewall answers a rate limit itself, with its own body shape.
+  if (res.status === 429 && !code) code = "rate_limited";
   throw new ApiError(msg, code);
 }
 

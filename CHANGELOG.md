@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Rate limits**: the official deployment rate-limits work routes, the analytics collector and admin sign-in per IP with Vercel Firewall rules (see the [operations guide](docs/OPERATIONS.md#rate-limits)). The app tells people to wait a minute instead of showing a raw error, and doesn't retry a rate-limited voice chunk.
+- `/api/ingest` answers `400` instead of `500` when no link is given.
+
 ## 0.4.0 — 2026-10-29
 
 - **Real from the first click**: visitors without keys get a free trial that makes real episodes, with Claude Opus 5.5 and ElevenLabs Eleven v4 running on Vercel AI Gateway under the deployment's own identity. Every call is metered at its real cost and capped per visitor and per site each day; past the cap, people are asked for their own keys. The silent demo remains only where no trial is offered.

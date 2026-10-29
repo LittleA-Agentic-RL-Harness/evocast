@@ -78,8 +78,11 @@ export async function readLinks(urls: string[], headers: Record<string, string>)
       const url = urls[i];
       try {
         const res = await fetch("/api/ingest", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ url }) });
-        const body = (await res.json()) as { docs?: SourceDoc[]; error?: string; code?: string; app?: string };
-        if (!res.ok || !body.docs) errors.push({ url, code: body.code, app: body.app, message: body.error ?? `HTTP ${res.status}` });
+        const body = (await res.json()) as { docs?: SourceDoc[]; error?: unknown; code?: string; app?: string };
+        if (!res.ok || !body.docs) {
+          const code = body.code ?? (res.status === 429 ? "rate_limited" : undefined);
+          errors.push({ url, code, app: body.app, message: typeof body.error === "string" ? body.error : `HTTP ${res.status}` });
+        }
         else results[i] = body.docs;
       } catch (e) {
         errors.push({ url, message: (e as Error).message });

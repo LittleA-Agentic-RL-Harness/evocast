@@ -6,6 +6,7 @@ import { TrialError, trialMeter, trialSpend, visitorHash } from "../lib/server/t
 import { llmUsd, priceId, ttsUsd } from "../lib/harness/cost";
 import { gatewaySpeechTimed } from "../lib/tts/gateway";
 import { mp3Duration, silentMp3 } from "../lib/tts/mp3";
+import { ApiError, postJSON } from "../lib/client/api";
 
 const pg = new PGlite();
 const db: DB = {
@@ -101,6 +102,24 @@ test("gateway speech: a tag-only line becomes a short pause instead of a rejecte
     const out = await gatewaySpeechTimed("token", [{ text: "[laughs]", voice_id: "a" }, { text: "That's the trick.", voice_id: "b" }], "eleven_v4", "en");
     assert.equal(calls, 1);
     assert.ok(out.starts[1] > 0.3 && out.starts[1] < 0.5);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("client: a Vercel Firewall rate limit reads as rate_limited; app trial errors keep their code", async () => {
+  const real = globalThis.fetch;
+  const reply = (status: number, body: unknown) => {
+    globalThis.fetch = (async () => new Response(JSON.stringify(body), { status })) as typeof fetch;
+  };
+  const failure = (p: Promise<unknown>) => p.then(() => assert.fail("expected a rejection"), (e: unknown) => e as ApiError);
+  try {
+    reply(429, { error: { code: "429", message: "Too Many Requests", id: "sin1::x" } });
+    const fw = await failure(postJSON("/api/tts", {}, {}));
+    assert.equal(fw.code, "rate_limited");
+    assert.equal(fw.message, "/api/tts failed (429)");
+    reply(429, { error: "Your free allowance for today is used up.", code: "trial_limit" });
+    assert.equal((await failure(postJSON("/api/tts", {}, {}))).code, "trial_limit");
   } finally {
     globalThis.fetch = real;
   }

@@ -25,6 +25,8 @@ import type { Harness } from "@/lib/harness/genome";
 type Via = "file" | "link" | "paste";
 type T = (zh: string, en: string) => string;
 
+const rateLimited = (T: T) => T("请求太频繁了，等一分钟再试。", "Too many requests in a short time. Wait a minute and try again.");
+
 /** Why a link couldn't be read, and what to do instead. */
 function linkMessage(err: LinkError, T: T): string {
   const host = (() => {
@@ -46,6 +48,8 @@ function linkMessage(err: LinkError, T: T): string {
     case "unsupported":
     case "empty":
       return T(`${host} 没有可读的文字。`, `No readable text at ${host}.`);
+    case "rate_limited":
+      return rateLimited(T);
     default:
       return `${host}: ${err.message}`;
   }
@@ -265,7 +269,9 @@ export default function Home() {
           ? T("今天的免费额度用完了。在设置里填上自己的钥匙就能继续，或者明天再来。", "Your free allowance for today is used up. Add your own keys in Settings to keep going, or come back tomorrow.")
           : code === "trial_closed"
             ? T("今天的免费试用名额已满。在设置里填上自己的钥匙就能继续，或者明天再来。", "Today's free trial is fully used. Add your own keys in Settings to keep going, or come back tomorrow.")
-            : (e as Error).message;
+            : code === "rate_limited"
+              ? rateLimited(T)
+              : (e as Error).message;
       setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     }
