@@ -5,6 +5,7 @@ import { combine, decodeText, extractFile, htmlToText, markdownToText, MAX_SOURC
 import { rewrite } from "../lib/ingest/url";
 import { cleanUrl } from "../lib/client/track";
 import { parseLinks, publicUrl } from "../lib/client/files";
+import { assertPublicAddress, isPublicAddress } from "../lib/server/net";
 
 const para = (n: number) => Array.from({ length: n }, (_, i) => `Sentence ${i} about harness evolution and audience fit.`).join(" ");
 
@@ -118,4 +119,23 @@ test("links: parse lists, never treat prose as links; analytics drop query strin
   assert.equal(publicUrl("https://docs.google.com/document/d/1/edit?token=secret#h"), "https://docs.google.com/document/d/1/edit");
   assert.equal(cleanUrl("https://news.ycombinator.com/item?id=42&utm_x=1"), "https://news.ycombinator.com/item?id=42");
   assert.equal(cleanUrl("https://mail.example.com/inbox?session=abc"), "https://mail.example.com/inbox");
+});
+
+test("ssrf: only public addresses pass, including IPv6 forms of private ones", async () => {
+  for (const ip of ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"]) assert.ok(isPublicAddress(ip), ip);
+  for (const ip of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "198.18.0.1", "0.0.0.0", "::1", "::", "::ffff:127.0.0.1", "::ffff:7f00:1", "64:ff9b::a00:1", "fd00::1", "fe80::1", "not-an-ip"])
+    assert.ok(!isPublicAddress(ip), ip);
+
+  const env = process.env.NODE_ENV;
+  Object.assign(process.env, { NODE_ENV: "production" });
+  try {
+    await assert.rejects(assertPublicAddress("[::ffff:7f00:1]"), /Private or local/);
+    await assert.rejects(assertPublicAddress("localhost"), /Private or local/);
+    await assertPublicAddress("8.8.8.8");
+    Object.assign(process.env, { EVOCAST_DESKTOP: "1" });
+    await assertPublicAddress("localhost");
+  } finally {
+    Object.assign(process.env, { NODE_ENV: env });
+    delete process.env.EVOCAST_DESKTOP;
+  }
 });

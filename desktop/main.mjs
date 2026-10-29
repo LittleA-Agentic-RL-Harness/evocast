@@ -65,7 +65,7 @@ async function startServer() {
     cwd: dir,
     stdio: "pipe",
     serviceName: "Evocast Server",
-    env: { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1", NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1" },
+    env: { ...process.env, PORT: String(port), HOSTNAME: "127.0.0.1", NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1", EVOCAST_DESKTOP: "1" },
   });
   server.stdout?.on("data", (d) => console.log("[server]", String(d).trim()));
   server.stderr?.on("data", (d) => console.error("[server]", String(d).trim()));

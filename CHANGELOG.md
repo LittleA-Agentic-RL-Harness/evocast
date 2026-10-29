@@ -4,6 +4,8 @@
 
 - **Rate limits**: the official deployment rate-limits work routes, the analytics collector and admin sign-in per IP with Vercel Firewall rules (see the [operations guide](docs/OPERATIONS.md#rate-limits)). The app tells people to wait a minute instead of showing a raw error, and doesn't retry a rate-limited voice chunk.
 - `/api/ingest` answers `400` instead of `500` when no link is given.
+- **SSRF guard checks addresses**: links and custom model endpoints are refused when their host name resolves to a private, loopback, link-local or other special-purpose address, including IPv6 forms such as `::ffff:127.0.0.1`. Checked again on every redirect.
+- **Admin sign-in uses scrypt**: the password check and the session signing key are derived with scrypt instead of a plain hash. Existing admin sessions sign out once.
 
 ## 0.4.0 — 2026-10-29
 
