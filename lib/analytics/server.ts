@@ -177,8 +177,12 @@ export async function stats(db: DB, f: Filter) {
       f,
       `select count(*) filter (where name = 'generate_start') starts, count(*) filter (where name = 'generate_ok') ok, count(*) filter (where name = 'generate_fail') fail, count(*) filter (where name = 'generate_cancel') cancel,
          coalesce(percentile_cont(0.5) within group (order by ev_num(props->>'ms')) filter (where name = 'generate_ok'), 0) / 1000 p50_sec,
-         coalesce(avg(ev_num(props->>'usd')) filter (where name = 'generate_start'), 0) avg_usd
-       from events where name like 'generate_%' and ${RANGE}{scope}`,
+         coalesce(percentile_cont(0.5) within group (order by ev_num(props->>'first_ms')) filter (where name = 'generate_ok' and ev_num(props->>'first_ms') > 0), 0) / 1000 first_p50_sec,
+         coalesce(avg(ev_num(props->>'usd')) filter (where name = 'generate_start'), 0) avg_usd,
+         count(*) filter (where name = 'ask') asks,
+         count(*) filter (where name = 'ask_fail') ask_fails,
+         coalesce(percentile_cont(0.5) within group (order by ev_num(props->>'ms')) filter (where name = 'ask'), 0) / 1000 ask_p50_sec
+       from events where (name like 'generate_%' or name like 'ask%') and ${RANGE}{scope}`,
     ),
     q(db, f, `select d.k, d.v, count(*) n from events, lateral (values ('persona', props->>'persona'), ('mode', props->>'mode'), ('style', props->>'style'), ('langs', props->>'langs'), ('minutes', props->>'minutes'), ('prefill', props->>'prefill'), ('compute', props->>'compute')) d(k, v) where name = 'generate_start' and ${RANGE} and d.v is not null{scope} group by 1, 2 order by 1, 3 desc`),
     q(db, f, `select coalesce(props->>'stage', '?') stage, left(coalesce(props->>'m', ''), 120) m, count(*) n from events where name = 'generate_fail' and ${RANGE}{scope} group by 1, 2 order by 3 desc limit 12`),

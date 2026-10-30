@@ -646,6 +646,10 @@ function Generation({ T, d }: { T: T; d: Stats }) {
             <dd>{fmtN(g.fail ?? 0)}</dd>
             <dt>{T("取消", "Cancelled")}</dt>
             <dd>{fmtN(g.cancel ?? 0)}</dd>
+            <dt>{T("首个声音（中位）", "First sound (median)")}</dt>
+            <dd>{g.first_p50_sec ? fmtDur(g.first_p50_sec) : "—"}</dd>
+            <dt>{T("举手提问", "Questions asked")}</dt>
+            <dd>{fmtN(g.asks ?? 0)}{g.asks ? T(` · 回答中位 ${fmtDur(g.ask_p50_sec ?? 0)}`, ` · answered in ${fmtDur(g.ask_p50_sec ?? 0)} (median)`) : ""}{g.ask_fails ? T(` · 失败 ${fmtN(g.ask_fails)}`, ` · ${fmtN(g.ask_fails)} failed`) : ""}</dd>
           </div>
           {Object.entries(dims).map(([k, rows]) => (
             <div key={k} className="stack" style={{ gap: 4 }}>
@@ -687,7 +691,7 @@ function Compute({ T, d }: { T: T; d: Stats }) {
   return (
     <Card
       title={T("试用算力", "Trial compute")}
-      hint={T("没有 Key 的访客由 Vercel AI Gateway 运行 Claude Opus 5.5 与 ElevenLabs，每次调用按实际花费记账", "Visitors without keys run Claude Opus 5.5 and ElevenLabs on Vercel AI Gateway; every call is metered at its real cost")}
+      hint={T("没有 Key 的访客由 Vercel AI Gateway 运行 Claude（读原文 Opus 5.5，写稿 Sonnet 5.5，开场、校验与问答 Haiku 5.5）与 ElevenLabs，每次调用按实际花费记账", "Visitors without keys run Claude (Opus 5.5 reads, Sonnet 5.5 writes, Haiku 5.5 opens, checks and answers) and ElevenLabs on Vercel AI Gateway; every call is metered at its real cost")}
       right={<span className={`badge${on ? " good" : ""}`}>{on ? T("开放中", "Open") : T("未开放", "Off")}</span>}
     >
       <div className="stack">
@@ -708,6 +712,12 @@ function Compute({ T, d }: { T: T; d: Stats }) {
           <dd>{usd(range.llm)}</dd>
           <dt>{T("语音", "Voice")}</dt>
           <dd>{usd(range.tts)} · {fmtN(range.ttsChars)} {T("字符", "chars")}</dd>
+          {range.stt > 0 && (
+            <>
+              <dt>{T("听写提问", "Spoken questions")}</dt>
+              <dd>{usd(range.stt)}</dd>
+            </>
+          )}
           {range.music > 0 && (
             <>
               <dt>{T("片头音乐", "Intro sting")}</dt>
