@@ -75,7 +75,8 @@
 | 逐句 TTS | `POST /v1/text-to-speech/{voice}` | 用于 Flash 和 v4 Turbo（Lite 档），每句时长精确可知 |
 | 模型清单 | `GET /v1/models` | 过滤 `can_do_text_to_speech` 和非 alpha 模型，选最新的 `eleven_vN` |
 | 账户 | `GET /v1/user` | 读取套餐、额度、能否克隆、名字（用于问候） |
-| 推荐 | `GET /v1/shared-voices` 参数 `featured`、`sort=trending`、`use_cases`、`gender`、`age`、`language` | 按「风格 × 语言 × 主持/嘉宾」组合查询；featured 结果不足时依次放宽 |
+| 推荐 | `GET /v1/shared-voices` 参数 `featured`、`sort=trending`、`use_cases`、`gender`、`age`、`language`、`include_live_moderated=false` | 按「风格 × 语言 × 主持/嘉宾」组合查询；featured 结果不足时依次放宽。只保留 `rate ≤ 1`（正常价格）、`notice_period` 非空非零（不会一夜下架）的声音；`verified_languages` 里在该语言、该模型上验证过的排前面，试听用对应语言的 `preview_url` |
+| 我的声音 | `GET /v1/voices` | 按位置排序；免费套餐据此为每个位置挑默认声音（跳过从声音库复制来的 `sharing.status = copied`） |
 | 声音设计 | `POST /v1/text-to-voice/design`（`eleven_ttv_v3`），保存用 `POST /v1/text-to-voice` | 为每个位置预填 "Native Mandarin…" 描述 → 3 个候选 → 保存并使用。**所有套餐可用**，只按试听文字计费 |
 | 克隆 | `POST /v1/voices/add`（IVC） | 强制勾选"本人或已获授权"；Starter 及以上套餐 |
 | 片头 | `POST /v1/music`（`force_instrumental`，7 秒） | 每种声线生成一次并缓存；只有当采样率和声道与人声一致时才拼进 MP3。付费套餐可用，$0.15/分钟 |
@@ -88,12 +89,13 @@
 | 甜妹电台 Idol | Shan Shan（北京）`ByhETIclHirOlWnWKhHc` / Lucy `r4thHOi5MAZw256OxDPJ` | Jade `g7LVvkPWALzPxOQbF6OE` / Elowen `dvbL7qkNGZY1IqPGZAjM` |
 
 v4 在输出语言和声音母语不同时，会用目标语言的母语口音发音，适合双语主持。
-社区声音可能被作者下架，所以每个位置都能一键替换（推荐、搜索、我的声音、设计）。
+四个英文默认声音正是 ElevenLabs 为退役默认声音指定的官方替代（帮助中心「What are default voices?」）；中文四个是社区声音。2026-10-30 通过 Gateway 核验：8 个默认声音和 6 个备选声音全部能正常发声（`npm run check:voices`）。
+社区声音可能被作者下架，所以每个位置都能一键替换（推荐、搜索、我的声音、设计）；生成时遇到 `voice_not_found` 会自动换成首选并保存（试用下用 `lib/tts/voices.ts` 里的官方备选声音）。
 
 ### 3.3 计费与限制
 
 - **价格**：v4 / v3 / Multilingual 为 $0.08/千字符，Flash / v4 Turbo 为 $0.04。标点、空格和音频标签都计入字符。
-- **免费套餐**：没有商用授权，API 也不能使用声音库声音（引导用户用「我的声音」或 Voice Design）。
+- **免费套餐**：没有商用授权，API 也不能使用声音库声音（返回 `402 paid_plan_required`）。所以免费套餐默认用账户里最接近的声音；2026 年 3 月之后注册的账户没有默认声音，这时一键用 Voice Design 设计两位主播（占用 3 个自定义声音位中的 2 个）。
 - **并发**：Creator 为 5，Pro 为 10。我们逐块串行请求，不会触发上限。
 - **前端调用**：官方要求不要把 Key 暴露在前端，而对话接口没有一次性 token，所以走无状态代理：Key 只放在请求头里，服务器不落盘。
 
@@ -217,20 +219,21 @@ v4 在输出语言和声音母语不同时，会用目标语言的母语口音�
 
 | 项目 | 状态 |
 |---|---|
-| 单元测试 23 项：帕累托与论文权重、补丁编辑器、切块与原句映射、MP3、规则测试、清洗、受众画像、界面 Harness（习惯、融合、回放、自调参、守护、补丁限幅、披露）、服务商识别、新模型自动采用 | ✅ |
+| 单元测试 80 项：帕累托与论文权重、补丁编辑器、切块与原句映射、MP3、规则测试、清洗、受众画像、界面 Harness（习惯、融合、回放、自调参、守护、补丁限幅、披露）、内容 Harness 的后台调优与实时守护、服务商识别、新模型自动采用、试用计量、声音排序与免费套餐默认声音 | ✅ |
 | TypeScript 类型检查、Vercel 生产构建、桌面 standalone 构建 | ✅ |
 | 真实接口：Anthropic 和 ElevenLabs 对无效 Key 返回清晰错误；模糊 Key 正确触发选择服务商 | ✅ |
 | 演示模式全流程（新界面）：两把钥匙页、arXiv 抓取、内容预填、配方菜单与固定、双语生成、阶段动画、自动打开播放器、逐句时间、会话轨迹、导航随使用出现、拼图、界面学习 | ✅ |
 | 深色 / 浅色、桌面 / 375px 移动端无横向滚动 | ✅ |
 | Mac 应用：打包、ad-hoc 签名验证、实机启动，3 秒内本地服务就绪，API 可用 | ✅ |
-| **用真实 Key 生成一期**（音质、中文计费、标签效果、时间戳精度、片头格式兼容性） | ⏳ 需要你的 Key |
+| 真实节目：免费试用（Gateway）上生成过真实的中英文节目（README 截图）；8 个默认声音和 6 个备选声音全部能发声 | ✅ |
+| **用自己的 ElevenLabs Key 走直连路径**（Text-to-Dialogue 时间戳精度、片头拼接、免费套餐默认声音、`paid_plan_required`） | ⏳ 需要你的 Key |
 
 ---
 
 ## 10. 路线图
 
 - **P0**
-  - 用真实 Key 各跑一期中文、一期英文，校准语速与成本，确认 `with-timestamps` 和片头拼接。
+  - 用自己的 ElevenLabs Key（付费、免费各一）各跑一期中文、一期英文，校准语速与成本，确认 `with-timestamps`、片头拼接和免费套餐的默认声音。
 - **P1**
   - 评委改用另一家族模型。
   - 使用 `audio_effects`（演播室混响等）。

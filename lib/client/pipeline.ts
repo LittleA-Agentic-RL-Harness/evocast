@@ -1,14 +1,16 @@
 "use client";
 
-import type { Brief, Episode, EpisodeRequest, Lang, Script, Speaker, TestCase, TestResult, Usage } from "../types";
+import type { Brief, Episode, EpisodeRequest, Lang, Script, Speaker, TestCase, TestResult, Usage, VoiceChange } from "../types";
 import type { Harness } from "../harness/genome";
-import { resolveVoices } from "../harness/styles";
+import { resolveVoices, STYLES, type VoiceSlot } from "../harness/styles";
+import type { SharedVoice, VoiceInfo } from "../tts/elevenlabs";
+import { accountDefaults, freeUsable, isFreeTier, missingSeats, rankAccount, SHELF, type Seat } from "../tts/voices";
 import { notesFor } from "../harness/profile";
 import { ttsUsd } from "../harness/cost";
 import { chunkCap, chunkScript } from "../tts/chunk";
 import { concatMp3, mp3Duration, mp3Format, stripMp3Headers } from "../tts/mp3";
 import { modelInfo } from "../tts/models";
-import { ApiError, keyHeaders, postAudio, postJSON } from "./api";
+import { ApiError, getJSON, keyHeaders, postAudio, postJSON } from "./api";
 import { idb } from "./store";
 import { getActive, getHarness, getProfile, newId, saveAudio, saveEpisode, saveSource, type Settings } from "./store";
 
@@ -26,7 +28,40 @@ export interface GenerateInput {
   langs: Lang[];
   settings: Settings;
   onProgress: (p: Progress) => void;
+  /** Voices the run had to choose: the settings to save, and what changed (to say in one line). */
+  onVoices?: (settings: Settings, change: VoiceChange) => void;
   signal?: AbortSignal;
+}
+
+type T = (zh: string, en: string) => string;
+
+/**
+ * A free ElevenLabs plan speaking through its own key. The free trial speaks through the AI Gateway
+ * on another account, where library voices work and the person's own voices don't exist.
+ */
+export const freePlan = (s: Settings) => s.keys.llmProvider !== "hosted" && isFreeTier(s.keys.elevenlabsTier);
+
+/** The account defaults that apply to a run (none on the trial, see freePlan). */
+export const accountVoices = (s: Settings) => (s.keys.llmProvider === "hosted" ? undefined : s.accountVoices);
+
+/** The voices a run uses for a show: the person's picks, else the account's, else the style's. */
+export const seatVoices = (s: Settings, style: EpisodeRequest["style"], lang: Lang) => resolveVoices(style, lang, s.voiceOverrides, accountVoices(s));
+
+/** A seat's role in a show: Studio has a host and a guest, Idol Radio two hosts. */
+export const seatRole = (style: Seat["style"], speaker: Speaker, T: T) =>
+  style === "studio" ? (speaker === "A" ? T("主持", "Host") : T("嘉宾", "Guest")) : speaker === "A" ? T("主播 A", "Host A") : T("主播 B", "Host B");
+
+const first = (name: string) => name.split(" –")[0];
+
+/** One line for what the run did to the voices. */
+export function voiceLine(changes: VoiceChange[], T: T): string {
+  return changes
+    .map((c) =>
+      c.kind === "account"
+        ? T(`免费套餐：主播用你账户里的 ${first(c.names[0])} × ${first(c.names[1])}。`, `Free plan: the hosts use ${first(c.names[0])} × ${first(c.names[1])} from your account.`)
+        : T(`${first(c.from)} 已不可用，${seatRole(c.style, c.speaker, T)}换成了 ${first(c.to)}，已保存。`, `${first(c.from)} is no longer available; ${first(c.to)} takes over as ${seatRole(c.style, c.speaker, T)} (saved).`),
+    )
+    .join(" ");
 }
 
 interface BriefResponse {
@@ -57,12 +92,34 @@ export function effectiveTtsModel(h: Harness, mode: EpisodeRequest["mode"], s: S
 export async function generateEpisodes(input: GenerateInput): Promise<Episode[]> {
   const { settings, request, onProgress, signal } = input;
   const headers = keyHeaders(settings.keys, settings.llmPrice);
+  // Voice changes made during the run are saved as they happen, on top of each other.
+  let current = settings;
+  const changes: VoiceChange[] = [];
+  const saveVoices = (patch: Partial<Settings>, change: VoiceChange) => {
+    current = { ...current, ...patch };
+    changes.push(change);
+    input.onVoices?.(current, change);
+  };
   const active = await getActive();
   const harness = await getHarness(active[request.mode]);
   const profile = await getProfile();
   const notes = notesFor(profile, request.persona);
   const ttsModel = effectiveTtsModel(harness, request.mode, settings);
   const sourceId = newId("src");
+
+  // Free plans can't use library voices through the API: start from the account's own voices,
+  // and stop before any spending when a seat has nothing it could speak with.
+  if (freePlan(settings)) {
+    if (!current.accountVoices) {
+      const own = await getJSON<{ voices: VoiceInfo[] }>("/api/voices?scope=mine", headers).catch(() => null);
+      if (own) {
+        const picked = accountDefaults(own.voices, ttsModel);
+        const v = resolveVoices(request.style, input.langs[0], current.voiceOverrides, picked);
+        saveVoices({ accountVoices: picked }, { kind: "account", names: [v.A.name, v.B.name] });
+      }
+    }
+    if (input.langs.some((l) => libraryOnly(request.style, l, current))) throw new ApiError("Free ElevenLabs plans can't use library voices through the API.", "free_needs_voices");
+  }
   await saveSource(sourceId, input.source);
 
   onProgress({ stage: "brief", message: `Reading ${input.source.name} (${Math.round(input.source.text.length / 1000)}k chars)…`, pct: 5 });
@@ -80,8 +137,31 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
     onProgress({ stage: "script", lang, message: harness.pipeline.revise ? "Writing, verifying and revising the script…" : "Writing the script…", pct: base + span * 0.05 });
     const s = await postJSON<ScriptResponse>("/api/script", { brief: b.brief, tests: b.tests, request: req, harness, notes }, headers, signal);
 
-    const voices = resolveVoices(request.style, lang, settings.voiceOverrides);
+    const voices = seatVoices(current, request.style, lang);
     const voiceIds: Record<Speaker, string> = { A: voices.A.voiceId, B: voices.B.voiceId };
+    /** Replace the seats a voice error points at; false when nothing could take their place. */
+    const heal = async (e: ApiError): Promise<boolean> => {
+      // The trial falls back on the vetted shelf; a free plan on its own voices; a paid plan on ElevenLabs' top pick.
+      const trial = current.keys.llmProvider === "hosted";
+      const free = !trial && (e.code === "paid_plan_required" || freePlan(current));
+      const own = free ? freeUsable((await getJSON<{ voices: VoiceInfo[] }>("/api/voices?scope=mine", headers).catch(() => null))?.voices ?? []) : [];
+      // A free plan's message names no voice: every seat outside the usable account voices is the problem.
+      const seats = free ? (["A", "B"] as Speaker[]).filter((sp) => !own.some((v) => v.voice_id === voiceIds[sp])) : seatsToHeal(e.message, voiceIds, request.style, lang, current);
+      let healed = false;
+      for (const speaker of seats) {
+        const seat = { style: request.style, lang, speaker };
+        const avoid = [voiceIds.A, voiceIds.B];
+        const next = trial ? bestOf(SHELF, seat, ttsModel, avoid) : free ? bestOf(own, seat, ttsModel, avoid) : await topPick(seat, ttsModel, avoid, headers).catch(() => null);
+        if (!next) continue;
+        const from = seatVoices(current, request.style, lang)[speaker].name;
+        const o = structuredClone(current.voiceOverrides);
+        ((o[request.style] ??= {})[lang] ??= {})[speaker] = next;
+        voiceIds[speaker] = next.voiceId;
+        saveVoices({ voiceOverrides: o }, { kind: "replaced", ...seat, from, to: next.name });
+        healed = true;
+      }
+      return healed;
+    };
     const chunks = chunkScript(s.script.lines, chunkCap(lang, harness.script.charsPerMinute[lang]));
     const parts: Uint8Array[] = [];
     const timings: number[] = new Array(s.script.lines.length).fill(NaN);
@@ -97,7 +177,12 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
       };
       const voice = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk.lines, voices: voiceIds, model: ttsModel, lang, context }, headers, signal);
       // One retry per chunk: a transient provider error shouldn't throw away the script already paid for.
-      const r = await voice().catch((e) => (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || e.code === "rate_limited")) ? Promise.reject(e) : voice()));
+      // A voice that's gone is replaced first, so the retry speaks with its successor.
+      const r = await voice().catch(async (e) => {
+        if (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || e.code === "rate_limited"))) throw e;
+        if (e instanceof ApiError && (e.code === "voice_not_found" || e.code === "paid_plan_required") && !(await heal(e))) throw e;
+        return voice();
+      });
       const bytes = stripMp3Headers(Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0)));
       if (ci === 0 && sting && sameFormat(sting, bytes)) {
         parts.push(stripMp3Headers(sting));
@@ -135,8 +220,9 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
       },
       durationSec: Math.round(mp3Duration(audio)),
       ttsModel,
-      voices: voiceIds,
+      voices: { ...voiceIds },
       timings: timings.map((t, i) => (Number.isNaN(t) ? (timings[i - 1] ?? 0) : t)),
+      ...(mine(changes, lang).length ? { voiceChanges: mine(changes, lang) } : {}),
     };
     onProgress({ stage: "save", lang, message: "Saving to your library…", pct: base + span * 0.98 });
     await saveAudio(ep.id, new Blob([audio as BlobPart], { type: "audio/mpeg" }));
@@ -145,6 +231,37 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
   }
   onProgress({ stage: "save", message: "Done", pct: 100 });
   return episodes;
+}
+
+/** The changes that shaped one language's episode. */
+const mine = (changes: VoiceChange[], lang: Lang) => changes.filter((c) => c.kind === "account" || c.lang === lang);
+
+/** A seat on a free plan with only the style's library default to speak with. */
+export function libraryOnly(style: EpisodeRequest["style"], lang: Lang, s: Settings): boolean {
+  const v = seatVoices(s, style, lang);
+  return (["A", "B"] as Speaker[]).some((sp) => v[sp].voiceId === STYLES[style].voices[lang][sp].voiceId);
+}
+
+/** The seats a "voice not found" names; when it names none, the ones still on a default voice, else both. */
+function seatsToHeal(message: string, voiceIds: Record<Speaker, string>, style: EpisodeRequest["style"], lang: Lang, s: Settings): Speaker[] {
+  const named = missingSeats(message, voiceIds);
+  if (named.length) return named;
+  const defaults = (["A", "B"] as Speaker[]).filter((sp) => !s.voiceOverrides[style]?.[lang]?.[sp]);
+  return defaults.length ? defaults : ["A", "B"];
+}
+
+/** The best fit for a seat among known voices (the account's, or the trial shelf), skipping the ones in use. */
+function bestOf(voices: VoiceInfo[], seat: Seat, model: string, avoid: string[]): VoiceSlot | null {
+  const v = rankAccount(voices, seat, model).find((x) => !avoid.includes(x.voice_id));
+  return v ? { voiceId: v.voice_id, name: v.name } : null;
+}
+
+/** ElevenLabs' first recommendation for a seat (the same list the voice picker shows). */
+async function topPick(seat: Seat, model: string, avoid: string[], headers: Record<string, string>): Promise<VoiceSlot | null> {
+  const q = new URLSearchParams({ scope: "recommend", language: seat.lang, style: seat.style, speaker: seat.speaker, model });
+  const { voices } = await getJSON<{ voices: SharedVoice[] }>(`/api/voices?${q}`, headers);
+  const v = voices.find((x) => !avoid.includes(x.voice_id));
+  return v ? { voiceId: v.voice_id, name: v.name } : null;
 }
 
 function sameFormat(a: Uint8Array, b: Uint8Array): boolean {

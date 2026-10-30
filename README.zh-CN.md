@@ -72,6 +72,31 @@
 
 <sub>截图里都是用免费试用、从真实 arXiv 论文生成的真实节目：Claude Opus 5.5 写稿，ElevenLabs 配音，并真实跑过一轮进化。</sub>
 
+## 工作原理
+
+```mermaid
+flowchart LR
+  A["📄 PDF / 链接"] --> P["✦ 预填<br/>习惯 + 内容"]
+  P --> B["提炼要点 + 固定测试<br/>（每份材料一次）"]
+  B --> S["按听众和语言写稿<br/>逐条校验 · 精品档会改写"]
+  S --> T["Eleven v4 对话合成<br/>逐句时间戳"]
+  T --> L["🎧 收听<br/>同步文字稿"]
+  L --> F["👍 👎 标签 · 完听 · 语速"]
+  F --> E["进化<br/>内容 harness + 界面 harness"]
+  E -. 更好的 harness .-> S
+  E -. 更好的预填和界面 .-> P
+```
+
+- **内容 harness**：轨迹分析 → 三个规划器（省钱 / 均衡 / 质量）→ 白名单内、经过结构校验的修改 → 在固定验证集上用固定测试评估 → 去掉低于底线和被帕累托支配的版本 → 按 HarnessPro 的加权平方距离（α,β = 1:2 · 1:1 · 2:1）选出「轻快 / 均衡 / 精品」三档。用自己的 Key 时，它还会**在使用中自己变好**：
+  - 每攒够 5 期新节目（或 2 次点踩 / 没听完就删），在你收听时为「均衡」档在后台跑一小步；
+  - 有每周预算（默认 1 美元，在「你」里设置），只有明显胜过重新测量的当前版本才切换；
+  - 切换后，实时守护把接下来 3 期和旧版本最后 3 期比较（实际听了多少秒、评分、删除、规则测试、实际时长和要求时长），变差就自动回滚；
+  - 首页用一行字说明改了什么，可以撤销。免费试用下不会运行。
+- **界面 harness**：每次创作都记录「我们预填了什么、你最后选了什么」。用历史回放给任意预填策略打分，不花一分钱；参数自调；规划器改写预填规则、快捷方式、展示节奏和语气；实时守护会撤销任何让命中率下降的改动。
+- **渐进展示**：首次打开只有问候和拖放框。「收听」「你」和微调选项会随着使用出现；进化引擎的控制项放在「显示全部功能」后面。
+
+深入了解：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · 设计笔记与调研：[docs/RESEARCH.md](docs/RESEARCH.md)
+
 ## 快速开始
 
 - **直接用**：打开 [evocast.vercel.app](https://evocast.vercel.app)，不填 Key 也能免费试用，或者填上自己的两把钥匙。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。
@@ -79,13 +104,17 @@
 - **本地运行**：
 
   ```bash
-  npm install && npm run dev
+  git clone https://github.com/LittleA-Agentic-RL-Harness/evocast && cd evocast
+  npm install
+  npm run dev            # http://localhost:3000，填自己的 Key，或者不填直接用离线演示
   ```
 - **Mac 应用**：从 [Releases](https://github.com/LittleA-Agentic-RL-Harness/evocast/releases/latest) 下载 `.dmg`（Apple Silicon）。它会在本机运行全部接口，不需要部署。首次打开：「系统设置 → 隐私与安全性 → 仍要打开」。
 - **命令行**：
 
   ```bash
-  npm run podcast -- --url https://arxiv.org/abs/2610.26770 --persona engineer --lang zh,en
+  cp .env.example .env.local     # 填 ANTHROPIC_API_KEY 和 ELEVENLABS_API_KEY
+  npm run podcast -- --url https://arxiv.org/abs/2610.26770 --persona engineer --lang zh,en --minutes 5
+  npm run podcast -- --file report.pdf --harness my-evolved-harness.json
   ```
 
 ## 两把钥匙
@@ -93,7 +122,7 @@
 | Key | 作用 | 说明 |
 |---|---|---|
 | **大模型** | 读懂原文、写稿、校验、进化 | 支持 Anthropic（默认 **Claude Opus 5.5**），以及 OpenAI、Gemini、xAI、Mistral、DeepSeek、通义、Kimi、GLM、豆包、小米 MiMo、MiniMax、硅基流动、OpenRouter 等 20 多家 OpenAI 兼容服务。按钥匙格式识别服务商（绝不拿钥匙去别家试，格式相同的 `sk-…` 会让你选一次）；推荐这把钥匙能用的最新旗舰，发布日期和价格在 OpenRouter、Vercel AI Gateway、models.dev 三个公开目录之间交叉核对，并标出最省和最强 |
-| **ElevenLabs** | 声音 | 读取你的套餐和额度，自动使用最新的对话语音模型（目前是 **Eleven v4**）。通过 API 使用声音库声音需要付费套餐 |
+| **ElevenLabs** | 声音 | 读取你的套餐和额度，自动使用最新的对话语音模型（目前是 **Eleven v4**，以后的 `eleven_vN` 自动采用）。所有套餐都能用：免费套餐不能通过 API 使用声音库声音，所以每位主播用你账户里最接近的声音，或者一键设计两位主播 |
 
 Key 只保存在你的设备上，服务端不存储、不记录。
 
@@ -121,6 +150,39 @@ Key 只保存在你的设备上，服务端不存储、不记录。
 - **自助分析**：对 `events` 表的只读 SQL，内置留存、单个访客路径等查询，支持导出 CSV / NDJSON。
 
 没连数据库就什么都不记录；具体记录和不记录哪些内容，见 [SECURITY.md](SECURITY.md)。
+
+## 听众与声音
+
+| 听众 | 得到什么 |
+|---|---|
+| 研究员 | 相对已有工作的新意、方法、评估、局限 |
+| 工程师 | 架构、成本与延迟的取舍、这周就能试的事 |
+| 高管 / 投资人 | 前 20% 就给结论，恰好三个决策 |
+| 产品 / 电商运营 | 场景、指标、一个三步实验 |
+| 新手 | 一个好比喻，每个术语都解释 |
+
+每种语言两套声线：**深度访谈 Studio**（沉稳、高级）和**甜妹电台 Idol**（甜美、明亮）。每个位置都能换：
+
+- **推荐**：ElevenLabs 为这个位置挑的声音，只保留按正常价格计费、有下架通知期（不会一夜消失）、没有实时审核的；在这个语言上用 Eleven v4 验证过的排在前面，试听也用这个语言。同一页还能搜索整个声音库。
+- **我的**：你账户里的声音，最合适的排前面。**设计**：用一句话描述 → 3 个候选 → 保存。**克隆**：只用于你有权克隆的声音。
+- **ElevenLabs 免费套餐**：每个位置默认用你账户里最接近的声音；账户里一个都没有时，一键设计两位主播。
+- **声音会自愈**：ElevenLabs 下架了某个声音时，节目会换成这个位置的首选（免费试用下换成一组核验过的官方声音），存为你的选择，并用一行字告诉你。`npm run check:voices` 会检查每个默认声音是否还能说话。
+
+可选 **Eleven Music** 片头音乐。
+
+## 路线图
+
+- [x] Vercel AI Gateway 免费试用；README 里是真实节目和真实的进化记录
+- [ ] 可插拔的 TTS（OpenAI、Gemini、本地 Kokoro / CosyVoice）
+- [ ] 换用另一家族的评委模型；按难度路由到轻快 / 均衡 / 精品
+- [ ] 团队 Hub（共享节目库和 harness）
+- [ ] 订阅主题 → 每日简报；输出 RSS 播客源
+- [ ] 签名与公证的 macOS 版；Windows 版
+- [ ] `npx evocast` 和 MCP server
+
+## 参与贡献
+
+欢迎 PR，见 [CONTRIBUTING.md](CONTRIBUTING.md)。适合上手的方向：新的 TTS 服务商、听众类型、语言或评估规则。
 
 ## 许可证与致谢
 

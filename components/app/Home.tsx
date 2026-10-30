@@ -7,7 +7,7 @@ import { Button, Disclosure, MenuItem, Popover, Segmented, fade } from "../ui/ki
 import { ArrowRight, ArrowUp, Check, ChevronDown, Doc, Sparkles, Xmark } from "../ui/icons";
 import type { Lang, Mode, PersonaId, StyleId } from "@/lib/types";
 import { PERSONAS, PERSONA_IDS } from "@/lib/harness/personas";
-import { STYLES, STYLE_IDS, resolveVoices } from "@/lib/harness/styles";
+import { STYLES, STYLE_IDS } from "@/lib/harness/styles";
 import { LENSES } from "@/lib/harness/lenses";
 import { blend, changedFields, DEFAULT_RECIPE, HABIT_CONFIDENT, habitConfidence, habitRecipe, type Recipe } from "@/lib/harness/ui";
 import { buildPortrait, portraitText } from "@/lib/harness/portrait";
@@ -17,7 +17,7 @@ import { ACCEPT, combine, htmlToText, type Source, type SourceDoc } from "@/lib/
 import { parseLinks, pickedFromDrop, publicUrl, readLinks, readPicked, type LinkError, type Picked } from "@/lib/client/files";
 import { track } from "@/lib/client/track";
 import { ApiError, getTrial, keyHeaders, postJSON, type Trial } from "@/lib/client/api";
-import { effectiveTtsModel, generateEpisodes, type Progress } from "@/lib/client/pipeline";
+import { effectiveTtsModel, generateEpisodes, seatVoices, voiceLine, type Progress } from "@/lib/client/pipeline";
 import { addSession, getActive, getHarness, newId, saveProfile, type Settings } from "@/lib/client/store";
 import { autoTunePrefill, checkInterfaceGuard } from "@/lib/client/evolution";
 import { maybeAutoTune } from "@/lib/client/autotune";
@@ -253,6 +253,11 @@ export default function Home() {
         langs: recipe.langs,
         settings,
         signal: ctrl.signal,
+        // Voices the run had to choose are saved right away and said in one line (also under the episode's title).
+        onVoices: (next, change) => {
+          update(next);
+          setNotice(voiceLine([change], T));
+        },
         onProgress: (p) => {
           stage = p.stage;
           setRun({ progress: p, error: null });
@@ -287,7 +292,11 @@ export default function Home() {
             ? T("今天的免费试用名额已满。在设置里填上自己的钥匙就能继续，或者明天再来。", "Today's free trial is fully used. Add your own keys in Settings to keep going, or come back tomorrow.")
             : code === "rate_limited"
               ? rateLimited(T)
-              : missingPermission((e as Error).message, T);
+              : code === "free_needs_voices" || code === "paid_plan_required"
+                ? T("免费的 ElevenLabs 套餐不能通过 API 使用声音库声音，而你的账户里还没有能用的声音。在设置 → 声音里一键设计两位主播（所有套餐可用）。", "Free ElevenLabs plans can't use Voice Library voices through the API, and your account has no voice to use yet. Design both hosts in Settings → Voices (works on every plan).")
+                : code === "voice_not_found"
+                  ? T("这期用到的声音已不可用，也没有找到替代。在设置 → 声音里换一个再试。", "A voice in this episode is no longer available and no replacement was found. Pick another in Settings → Voices and try again.")
+                  : missingPermission((e as Error).message, T);
       setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     }
@@ -410,7 +419,7 @@ export default function Home() {
       {(error || run?.error || notice) && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className={run?.error || error ? "error" : "card flat hint"}>
           {error ?? run?.error ?? notice}
-          {run?.error && /key|Key|401|钥匙/.test(run.error) && (
+          {run?.error && /key|Key|401|钥匙|Settings|设置/.test(run.error) && (
             <>
               {" "}
               <button className="btn small plain" onClick={() => go("settings")}>
@@ -564,7 +573,7 @@ function RecipeSentence({ recipe, setRecipe, settings, update }: { recipe: Recip
     <Token k={recipe.style} menu={(close) => (
       <>
         {STYLE_IDS.map((id) => {
-          const v = resolveVoices(id as StyleId, recipe.langs[0], settings.voiceOverrides);
+          const v = seatVoices(settings, id as StyleId, recipe.langs[0]);
           return <MenuItem key={id} title={STYLES[id].label[lang]} subtitle={`${v.A.name.split(" –")[0]} × ${v.B.name.split(" –")[0]}`} checked={recipe.style === id} onSelect={() => { setRecipe({ ...recipe, style: id as StyleId }); close(); }} />;
         })}
       </>

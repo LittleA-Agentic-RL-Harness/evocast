@@ -125,6 +125,8 @@ export interface Settings {
   ttsOverride: Partial<Record<Mode, string>>;
   ttsMultiplier: number;
   voiceOverrides: VoiceOverrides;
+  /** Free ElevenLabs plans: each seat's default from the account's own voices (lib/tts/voices.ts). */
+  accountVoices?: VoiceOverrides;
   llmPrice?: { input: number; output: number };
   /** Set once the two-key onboarding is done (or skipped into demo mode). */
   onboarded?: boolean;

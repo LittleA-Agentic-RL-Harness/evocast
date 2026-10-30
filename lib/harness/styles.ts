@@ -89,8 +89,13 @@ export const STYLE_IDS = Object.keys(STYLES) as StyleId[];
 /** User overrides: voices[style][lang][speaker] = VoiceSlot. */
 export type VoiceOverrides = Partial<Record<StyleId, Partial<Record<Lang, Partial<Record<Speaker, VoiceSlot>>>>>>;
 
-export function resolveVoices(style: StyleId, lang: Lang, overrides?: VoiceOverrides): Record<Speaker, VoiceSlot> {
+/**
+ * The voice for each seat: the person's own pick, else the account default (free ElevenLabs plans,
+ * which can't use library voices through the API), else the style's library default.
+ */
+export function resolveVoices(style: StyleId, lang: Lang, overrides?: VoiceOverrides, accountDefaults?: VoiceOverrides): Record<Speaker, VoiceSlot> {
   const base = STYLES[style].voices[lang];
   const o = overrides?.[style]?.[lang] ?? {};
-  return { A: o.A ?? base.A, B: o.B ?? base.B };
+  const a = accountDefaults?.[style]?.[lang] ?? {};
+  return { A: o.A ?? a.A ?? base.A, B: o.B ?? a.B ?? base.B };
 }

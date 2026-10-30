@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "podcast": "tsx scripts/podcast.mts",
+    "check:voices": "tsx scripts/check-voices.mts",
     "desktop:prepare": "BUILD_TARGET=desktop next build && node scripts/desktop-prepare.mjs",
     "desktop:dev": "npm --prefix desktop run dev",
     "desktop:build": "npm run desktop:prepare && npm --prefix desktop run dist",

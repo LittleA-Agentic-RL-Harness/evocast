@@ -90,6 +90,9 @@ flowchart TB
   Content -. portrait summary & notes .-> Interface
 ```
 
+- **The content harness also tunes itself in use** (own keys only, never on the trial). After 5 new episodes or 2 negative signals, `lib/client/autotune.ts` runs one resumable micro‑epoch for *medium*: re‑measure the parent, analyze, one balanced plan, measure the candidate. It switches only on a clear win (≥ 5 points more tests at ≤ +25% cost, or ≥ 20% cheaper with no fewer passes), inside a rolling weekly budget (`settings.tuneBudget`, default $1). Validation metrics are cached under `scope:model:notesHash:valIds`.
+- **A live guard watches every content switch**, like the interface's: the child's next 3 episodes in that mode are scored against the parent's last 3 (seconds heard, rating, deletions, rule tests, delivered vs requested length; `lib/harness/autotune.ts`) and the parent comes back if they land more than 0.1 worse. Home says what changed in one line, with *Undo*.
+
 ## What the content harness can change
 
 | Knob | Range | Evolvable |
@@ -118,6 +121,19 @@ flowchart TB
 | Text-to-Dialogue: ≤2,000 chars / request | chunks ≤1,800 chars; `previous_text`/`future_text` across chunks |
 | Mandarin ≈ 4 chars/s | Chinese chunks ≈ 625 chars (keeps responses under 4.5 MB) |
 | Mac app needs the API locally | Electron `utilityProcess` runs the Next standalone server on a fixed port (stable IndexedDB origin) |
+
+## Voices
+
+Each seat (style × language × host) resolves in one place, `resolveVoices` in `lib/harness/styles.ts`: the person's pick, else the account default, else the style's Voice Library default. Everything that picks a voice lives in `lib/tts/voices.ts`.
+
+| Situation | What happens |
+|---|---|
+| Paid ElevenLabs plan | Library defaults work directly. **For you** asks `GET /v1/shared-voices` with `include_live_moderated=false`, then `rankLibrary` keeps voices with `rate ≤ 1` and a non‑zero `notice_period`, and puts voices verified in the seat's language on the seat's model first. Previews use the matching `verified_languages[].preview_url`. |
+| Free ElevenLabs plan | Library voices answer `402 paid_plan_required` through the API. Onboarding reads `GET /v1/voices` and `accountDefaults` gives every seat the closest account voice (language, then gender, age and use; Library copies skipped; the two hosts never share a voice). No voice at all → one click designs both hosts. A run stops before spending when a seat would still need a library voice. |
+| Free trial | Speech goes through the AI Gateway on Vercel's ElevenLabs account, so library defaults work and the person's own voices don't exist there; account defaults are ignored. |
+| A voice disappears | `/api/tts` answers `voice_not_found` (direct or via the Gateway, whose message names the id). The pipeline replaces that seat with its top pick (paid), best account voice (free) or the vetted `SHELF` (trial), saves it as an override, retries the chunk once, and stores the change on the episode, shown as one line under its title. |
+
+`npm run check:voices` makes every default and shelf voice say one word; `.github/workflows/voices.yml` runs it weekly when a secret is set.
 
 ## Sources and analytics
 

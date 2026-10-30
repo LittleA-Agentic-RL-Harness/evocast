@@ -2,6 +2,8 @@ import type { Lang } from "../types";
 import { modelInfo, newestDialogueModel, TTS_MODELS } from "./models";
 import { mp3Duration, stripMp3Headers } from "./mp3";
 import { stripTags, sanitizeTags } from "./tags";
+import { accountDefaults, isFreeTier, rankLibrary, seatTraits } from "./voices";
+import type { VoiceOverrides } from "../harness/styles";
 
 const BASE = "https://api.elevenlabs.io";
 export const OUTPUT_FORMAT = "mp3_44100_128";
@@ -29,14 +31,13 @@ async function el(key: string, path: string, init: RequestInit = {}): Promise<Re
     else if (Array.isArray(d)) message = d.map((x) => x.msg).join("; ");
     else if (d) {
       message = d.message ?? message;
-      code = d.status ?? d.code;
+      // `status` is the legacy field and `code` the current one; the two voice codes win either way.
+      code = [d.code, d.status].find((c) => c === "voice_not_found" || c === "paid_plan_required") ?? d.status ?? d.code;
     }
   } catch {
     /* non-JSON error body */
   }
-  if (code === "voice_not_found" || /voice.*(not found|does not exist)/i.test(message)) {
-    message += " — this voice isn't available to your account. Open the Voices tab to add it from the library (paid plan) or pick another voice.";
-  }
+  if (code !== "paid_plan_required" && (code === "voice_not_found" || /voice.*(not found|does not exist)/i.test(message))) code = "voice_not_found";
   throw new ElevenError(message, res.status, code);
 }
 
@@ -99,6 +100,15 @@ export async function textToSpeechLines(key: string, inputs: DialogueInput[], mo
 
 // ------------------------------------------------------------------ voices & account
 
+/** A language a voice was checked in, per model, with a preview spoken in that language. */
+export interface VerifiedLanguage {
+  language: string;
+  model_id?: string;
+  accent?: string | null;
+  locale?: string | null;
+  preview_url?: string | null;
+}
+
 export interface VoiceInfo {
   voice_id: string;
   name: string;
@@ -106,12 +116,26 @@ export interface VoiceInfo {
   description?: string | null;
   preview_url?: string | null;
   labels?: Record<string, string>;
+  verified_languages?: VerifiedLanguage[] | null;
+  is_legacy?: boolean;
+  /** "copied" (or "copied_disabled") marks a Voice Library voice saved into the account. */
+  sharing?: { status?: string | null } | null;
 }
 
 export async function listMyVoices(key: string): Promise<VoiceInfo[]> {
   const res = await el(key, "/v1/voices");
   const body = (await res.json()) as { voices: VoiceInfo[] };
-  return body.voices.map((v) => ({ voice_id: v.voice_id, name: v.name, category: v.category, description: v.description, preview_url: v.preview_url, labels: v.labels }));
+  return body.voices.map((v) => ({
+    voice_id: v.voice_id,
+    name: v.name,
+    category: v.category,
+    description: v.description,
+    preview_url: v.preview_url,
+    labels: v.labels,
+    verified_languages: v.verified_languages,
+    is_legacy: v.is_legacy,
+    sharing: v.sharing?.status ? { status: v.sharing.status } : null,
+  }));
 }
 
 export interface SharedVoice {
@@ -129,13 +153,19 @@ export interface SharedVoice {
   descriptive?: string;
   category?: string;
   free_users_allowed?: boolean;
+  /** Credit multiplier the owner set: 1 is the normal price. */
+  rate?: number | null;
+  /** Days the owner must give before removing the voice; null or 0 means it can vanish any day. */
+  notice_period?: number | null;
+  live_moderation_enabled?: boolean;
+  verified_languages?: VerifiedLanguage[] | null;
 }
 
 export async function searchSharedVoices(
   key: string,
   q: { search?: string; language?: string; gender?: string; age?: string; use_case?: string; page_size?: number },
 ): Promise<SharedVoice[]> {
-  const p = new URLSearchParams({ page_size: String(q.page_size ?? 24), sort: "usage_character_count_1y" });
+  const p = new URLSearchParams({ page_size: String(q.page_size ?? 24), sort: "usage_character_count_1y", include_live_moderated: "false" });
   if (q.search) p.set("search", q.search);
   if (q.language) p.set("language", q.language);
   if (q.gender) p.set("gender", q.gender);
@@ -181,6 +211,8 @@ export interface ElevenAccount {
   recommendedModel: string | null;
   /** Permissions this key lacks among the ones onboarding reads (e.g. models_read). */
   missing: string[];
+  /** Free plans only: each seat's closest voice in the account (empty when the account has none). */
+  accountVoices?: VoiceOverrides;
 }
 
 /** A restricted key: 401 `missing_permissions` in practice, 403 `insufficient_permissions` per the docs. Invalid keys say `invalid_api_key`. */
@@ -212,16 +244,21 @@ export async function inspectAccount(key: string): Promise<ElevenAccount> {
   // Alpha models need special access: never auto-pick one.
   const tts = models ? models.filter((m) => m.can_do_text_to_speech !== false && !m.requires_alpha_access).map((m) => m.model_id) : [...TTS_MODELS];
   const tier = user?.subscription?.tier ?? null;
+  const free = isFreeTier(tier);
+  const recommendedModel = newestDialogueModel(tts);
+  // Library voices need a paid plan through the API, so a free plan starts from its own voices.
+  const own = free ? await read<{ voices: VoiceInfo[] }>("/v1/voices") : null;
   return {
     tier,
     characterCount: user?.subscription?.character_count ?? null,
     characterLimit: user?.subscription?.character_limit ?? null,
-    canClone: user?.subscription?.can_use_instant_voice_cloning ?? tier !== "free",
-    libraryViaApi: tier !== "free",
+    canClone: user?.subscription?.can_use_instant_voice_cloning ?? !free,
+    libraryViaApi: !free,
     firstName: user?.first_name ?? null,
     ttsModels: tts,
-    recommendedModel: newestDialogueModel(tts),
+    recommendedModel,
     missing,
+    ...(own ? { accountVoices: accountDefaults(own.voices, recommendedModel ?? undefined) } : {}),
   };
 }
 
@@ -266,7 +303,7 @@ export async function textToDialogueTimed(
     });
     return { audio, starts: fillStarts(starts, inputs, mp3Duration(audio)) };
   } catch (e) {
-    if (e instanceof ElevenError && (e.status === 401 || e.status === 402 || e.status === 429)) throw e;
+    if (e instanceof ElevenError && (e.status === 401 || e.status === 402 || e.status === 429 || e.code === "voice_not_found")) throw e;
     const audio = await textToDialogue(key, inputs, model, lang);
     return { audio, starts: fillStarts(inputs.map(() => NaN), inputs, mp3Duration(audio)) };
   }
@@ -306,25 +343,30 @@ export function fillStarts(starts: number[], inputs: { text: string }[], duratio
 
 // ------------------------------------------------------------------ discovery, design, music
 
-export type SlotHint = { language: "zh" | "en"; style: "studio" | "idol"; speaker: "A" | "B" };
+export type SlotHint = { language: "zh" | "en"; style: "studio" | "idol"; speaker: "A" | "B"; model?: string };
 
-/** "ElevenLabs recommends": featured, then trending, Voice Library voices that fit a slot. */
+/**
+ * "ElevenLabs recommends": featured, then trending, Voice Library voices that fit a slot, kept
+ * only when they cost normal credits and can't vanish overnight (see rankLibrary).
+ */
 export async function recommendVoices(key: string, hint: SlotHint): Promise<SharedVoice[]> {
-  const gender = hint.style === "idol" ? "female" : hint.speaker === "A" ? "male" : "female";
-  const base = new URLSearchParams({ language: hint.language, gender, page_size: "12" });
-  if (hint.style === "idol") base.set("age", "young");
-  base.append("use_cases", hint.style === "idol" ? "social_media" : "conversational");
+  const t = seatTraits({ style: hint.style, lang: hint.language, speaker: hint.speaker });
+  const base = new URLSearchParams({ language: hint.language, gender: t.gender, page_size: "24", include_live_moderated: "false" });
+  if (t.age) base.set("age", t.age);
+  base.append("use_cases", t.useCase);
   const run = async (extra: Record<string, string>) => {
     const p = new URLSearchParams(base);
     for (const [k, v] of Object.entries(extra)) p.set(k, v);
     const res = await el(key, `/v1/shared-voices?${p}`);
-    return ((await res.json()) as { voices: SharedVoice[] }).voices;
+    return rankLibrary(((await res.json()) as { voices: SharedVoice[] }).voices, hint.language, hint.model);
   };
   const featured = await run({ featured: "true", sort: "trending" }).catch(() => [] as SharedVoice[]);
   const trending = featured.length >= 6 ? [] : await run({ sort: "trending" }).catch(() => [] as SharedVoice[]);
-  const broad = featured.length + trending.length >= 4 ? [] : await searchSharedVoices(key, { language: hint.language, gender, page_size: 12 });
+  const broad =
+    featured.length + trending.length >= 4 ? [] : rankLibrary(await searchSharedVoices(key, { language: hint.language, gender: t.gender, page_size: 24 }), hint.language, hint.model);
   const seen = new Set<string>();
-  return [...featured, ...trending, ...broad].filter((v) => !seen.has(v.voice_id) && seen.add(v.voice_id)).slice(0, 9);
+  const all = [...featured, ...trending, ...broad].filter((v) => !seen.has(v.voice_id) && seen.add(v.voice_id));
+  return rankLibrary(all, hint.language, hint.model).slice(0, 9);
 }
 
 export interface DesignPreview {
