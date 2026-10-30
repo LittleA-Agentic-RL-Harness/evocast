@@ -41,7 +41,7 @@ export async function POST(req: Request) {
           : b.op === "chapter"
             ? await writeChapter(cfg, h, x, b.plan!, b.k ?? 1, b.last ?? [], b.shown ?? [], onText)
             : b.op === "grade"
-              ? await gradeEpisode(cfg, h, b.brief, x.tests, b.script!, b.request)
+              ? await gradeEpisode(cfg, h, b.brief, x.tests, b.script!, b.request, x.figures)
               : await runScriptStage(cfg, h, b.brief, x.tests, b.request, x.notes, b.forceGrade ?? false);
       return { ...out, latencyMs: Date.now() - t0 };
     };

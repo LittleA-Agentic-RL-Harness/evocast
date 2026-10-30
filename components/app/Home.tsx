@@ -232,13 +232,14 @@ export default function Home() {
       const read = onTrial ? source.text.slice(0, trial?.maxChars ?? Infinity) : source.text;
       const n = chapterMinutes(minutes).length;
       const graded = harness.pipeline.grade || harness.pipeline.revise;
-      let llm = price ? ((estimateTokens(read) + 4000) * price.input + 5000 * price.output) / 1e6 : 0;
+      // Calibrated on real trial runs: a chapter call reads ~10k tokens (system, brief, plan, figures), Chinese runs ~1.5 tokens a character.
+      let llm = price ? ((estimateTokens(read) + 4000) * price.input + 7000 * price.output) / 1e6 : 0;
       let chars = 0;
       for (const l of recipe.langs) {
         const c = harness.script.charsPerMinute[l] * minutes;
         chars += c;
-        const out = (l === "zh" ? c * 1.2 : c / 3.6) * 1.3;
-        const write = n * 7000 * (price?.input ?? 0) + out * (price?.output ?? 0);
+        const out = (l === "zh" ? c * 1.5 : c / 3.6) * 1.3;
+        const write = n * 10_000 * (price?.input ?? 0) + out * (price?.output ?? 0);
         const grade = graded ? (out + 5000) * (price?.input ?? 0) + 1500 * (price?.output ?? 0) : 0;
         llm += (write * (harness.pipeline.revise ? 2.2 : 1) + grade) / 1e6;
       }
@@ -254,7 +255,8 @@ export default function Home() {
   }, [harness, source, recipe.minutes, costFor, onTrial, trial]);
   const trialOut = onTrial && trial !== null && (!trial.available || (trial.left ?? 0) < 0.05);
   /** On the trial, lengths today's allowance can't cover are offered only with your own keys. */
-  const affordable = (m: number) => !onTrial || trial === null || costFor(m) <= (trial.left ?? 0);
+  // With a margin: running out halfway through an episode is worse than picking a shorter one.
+  const affordable = (m: number) => !onTrial || trial === null || costFor(m) * 1.15 <= (trial.left ?? 0);
 
   async function generate() {
     if (!source || !prefill || run) return;
