@@ -15,7 +15,7 @@ import { FEEDBACK_CHIPS, applyChip } from "@/lib/harness/profile";
 import { buildTestSuite, RULE_TESTS } from "@/lib/harness/tests";
 import { stripTags } from "@/lib/tts/tags";
 import { deleteEpisode, getAudio, getEpisode, getProfile, saveEpisode, saveProfile } from "@/lib/client/store";
-import { downloadBlob, slug, transcriptMarkdown } from "@/lib/client/pipeline";
+import { downloadBlob, slug, transcriptMarkdown, voiceLine } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
 
 const RATES = [1, 1.25, 1.5, 2];
@@ -176,6 +176,7 @@ export function NowPlaying() {
               <span className="caption ellipsis">
                 {PERSONAS[e.persona].label[lang]} · {STYLES[e.style].label[lang]}
               </span>
+              {e.voiceChanges && <span className="caption">{voiceLine(e.voiceChanges, T)}</span>}
             </div>
             <Scrubber />
             <div className="transport">

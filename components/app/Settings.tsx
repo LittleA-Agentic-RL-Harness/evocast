@@ -1,17 +1,17 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
-import { Button, Dialog, Disclosure, Segmented, Toggle, fade } from "../ui/kit";
+import { Button, Dialog, Disclosure, Segmented, Toggle } from "../ui/kit";
 import { Check, Key, Play, Pause, Sparkles } from "../ui/icons";
 import type { Lang, Speaker, StyleId } from "@/lib/types";
-import { STYLES, STYLE_IDS, resolveVoices, type VoiceSlot } from "@/lib/harness/styles";
+import { STYLES, STYLE_IDS, type VoiceSlot } from "@/lib/harness/styles";
 import { modelInfo } from "@/lib/tts/models";
 import { getJSON, getTrial, keyHeaders, postJSON } from "@/lib/client/api";
-import { downloadBlob, getSting } from "@/lib/client/pipeline";
+import { downloadBlob, freePlan, getSting, libraryOnly, seatRole, seatVoices } from "@/lib/client/pipeline";
 import { DEFAULT_SETTINGS, idb, type Settings } from "@/lib/client/store";
 import type { SharedVoice, VoiceInfo, DesignPreview } from "@/lib/tts/elevenlabs";
+import { accountDefaults, designBrief, freeUsable, previewIn, rankAccount } from "@/lib/tts/voices";
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -201,6 +201,24 @@ function Sting() {
 function Voices() {
   const { T, lang, settings, update } = useApp();
   const [target, setTarget] = useState<Target | null>(null);
+  const [designing, setDesigning] = useState<StyleId | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [unread, setUnread] = useState(false);
+  const free = freePlan(settings);
+  const headers = keyHeaders(settings.keys);
+
+  // Free plans speak with the account's own voices: pick the closest one for each seat once.
+  useEffect(() => {
+    if (!free || settings.accountVoices) return;
+    let live = true;
+    getJSON<{ voices: VoiceInfo[] }>("/api/voices?scope=mine", headers)
+      .then((r) => live && update({ ...settings, accountVoices: accountDefaults(r.voices, settings.keys.elevenlabsModel) }))
+      .catch(() => live && setUnread(true));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [free, settings.accountVoices]);
 
   const assign = (t: Target, slot: VoiceSlot | null) => {
     const o = structuredClone(settings.voiceOverrides);
@@ -211,9 +229,41 @@ function Voices() {
     update({ ...settings, voiceOverrides: o });
   };
 
+  /** A style a free plan can't voice yet (once the account has been read). */
+  const needsVoices = (style: StyleId) => free && (Boolean(settings.accountVoices) || unread) && (["zh", "en"] as Lang[]).some((l) => libraryOnly(style, l, settings));
+
+  /** One click: Voice Design makes both hosts (bilingual, so they serve both languages) and they become this style's defaults. */
+  async function designBoth(style: StyleId) {
+    setDesigning(style);
+    setError(null);
+    try {
+      const seats: Partial<Record<Speaker, VoiceSlot>> = {};
+      for (const speaker of ["A", "B"] as Speaker[]) {
+        const description = designBrief({ style, lang, speaker }, true);
+        const { previews } = await postJSON<{ previews: DesignPreview[] }>("/api/voices", { action: "design", description }, headers);
+        const name = `${style === "idol" ? "Idol" : "Studio"} ${speaker}`;
+        const r = await postJSON<{ voice_id: string }>("/api/voices", { action: "save-design", name, description, generatedVoiceId: previews[0].generated_voice_id }, headers);
+        seats[speaker] = { voiceId: r.voice_id, name };
+      }
+      const a = structuredClone(settings.accountVoices ?? {});
+      a[style] = { zh: seats, en: seats };
+      update({ ...settings, accountVoices: a });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDesigning(null);
+    }
+  }
 
   return (
-    <Section title={T("声音", "Voices")} hint={T("每个声线有中英文各两位主播。点任意一位，看看 ElevenLabs 为这个位置推荐的声音，或用一句话设计新声音。", "Each style has two hosts per language. Tap one to see ElevenLabs' picks for that seat, or design a new voice from one sentence.")}>
+    <Section
+      title={T("声音", "Voices")}
+      hint={
+        free
+          ? T("免费套餐不能通过 API 使用声音库声音，所以主播用你账户里的声音。点任意一位可以换，或用一句话设计新声音。", "Free plans can't use Voice Library voices through the API, so the hosts use voices from your account. Tap one to change it, or design a new voice from one sentence.")
+          : T("每个声线有中英文各两位主播。点任意一位，看看 ElevenLabs 为这个位置推荐的声音，或用一句话设计新声音。", "Each style has two hosts per language. Tap one to see ElevenLabs' picks for that seat, or design a new voice from one sentence.")
+      }
+    >
       {STYLE_IDS.map((style) => (
         <div key={style} className="card stack">
           <div className="spread">
@@ -221,9 +271,14 @@ function Voices() {
               <div style={{ fontWeight: 650 }}>{STYLES[style].label[lang]}</div>
               <div className="caption">{STYLES[style].tagline[lang]}</div>
             </div>
+            {needsVoices(style) && (
+              <Button size="small" onClick={() => designBoth(style)} disabled={designing !== null}>
+                <Sparkles size={14} /> {designing === style ? T("设计中…", "Designing…") : T("设计两位主播", "Design both hosts")}
+              </Button>
+            )}
           </div>
           {(["zh", "en"] as Lang[]).map((l) => {
-            const v = resolveVoices(style, l, settings.voiceOverrides);
+            const v = seatVoices(settings, style, l);
             return (
               <div key={l} className="row" style={{ gap: 13, flexWrap: "nowrap" }}>
                 <span className="caption" style={{ width: 34 }}>{l === "zh" ? "中文" : "EN"}</span>
@@ -235,7 +290,7 @@ function Voices() {
                       <span style={{ minWidth: 0 }}>
                         <span className="ellipsis" style={{ display: "block", fontWeight: 550, fontSize: 14 }}>{v[sp].name.split(" –")[0]}</span>
                         <span className="caption ellipsis" style={{ display: "block" }}>
-                          {sp === "A" ? (style === "studio" ? T("主持", "Host") : T("主播 A", "Host A")) : style === "studio" ? T("嘉宾", "Guest") : T("主播 B", "Host B")}
+                          {seatRole(style, sp, T)}
                           {custom ? ` · ${T("自定义", "custom")}` : ""}
                         </span>
                       </span>
@@ -247,6 +302,7 @@ function Voices() {
           })}
         </div>
       ))}
+      {error && <div className="error">{error}</div>}
 
       <VoicePicker target={target} onClose={() => setTarget(null)} onPick={(slot) => { if (target) assign(target, slot); setTarget(null); }} onReset={() => { if (target) assign(target, null); setTarget(null); }} />
     </Section>
@@ -268,7 +324,7 @@ function PreviewButton({ src }: { src?: string | null }) {
           ref.current.onended = () => setOn(false);
         }
         if (on) ref.current.pause();
-        else ref.current.play();
+        else ref.current.play().catch(() => setOn(false));
         setOn(!on);
       }}
       aria-label="preview"
@@ -279,35 +335,36 @@ function PreviewButton({ src }: { src?: string | null }) {
   );
 }
 
+type Source = "recommend" | "mine" | "design";
+
 function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | null; onClose: () => void; onPick: (s: VoiceSlot) => void; onReset: () => void }) {
   const { T, lang, settings } = useApp();
-  const [tab, setTab] = useState<"recommend" | "search" | "mine" | "design">("recommend");
+  // Free plans can't use library voices through the API, so they only see what they can use.
+  const free = freePlan(settings);
+  const model = settings.keys.elevenlabsModel ?? "eleven_v4";
+  const [tab, setTab] = useState<Source>(free ? "mine" : "recommend");
   const [voices, setVoices] = useState<(SharedVoice | VoiceInfo)[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  // The submitted search: "For you" shows library results for it, and recommendations when it's empty.
+  const [search, setSearch] = useState("");
   const [desc, setDesc] = useState("");
   const [previews, setPreviews] = useState<DesignPreview[]>([]);
   const [name, setName] = useState("");
   const headers = keyHeaders(settings.keys);
+  const shown: Source = free && tab === "recommend" ? "mine" : tab;
 
   useEffect(() => {
     if (!target) return;
     setPreviews([]);
     setError(null);
-    const zh = target.lang === "zh";
-    const idol = target.style === "idol";
-    const male = !idol && target.speaker === "A";
-    setDesc(
-      zh
-        ? `Native Mandarin Chinese ${idol ? "young woman with a sweet, bright, energetic voice like a girl-group radio host; playful but clear" : male ? "man in his 30s, a calm, warm and articulate podcast host" : "woman in her 30s, a confident, friendly expert guest on a tech podcast"}; standard Mandarin, studio-quality recording, natural conversational pace.`
-        : `Native American English ${idol ? "young woman with a sweet, bright, bubbly voice like a pop radio host; playful but clear" : male ? "man in his 30s, a calm, warm and articulate podcast host" : "woman in her 30s, a confident, friendly expert guest on a tech podcast"}; studio-quality recording, natural conversational pace.`,
-    );
-    setName(`${idol ? "Idol" : "Studio"} ${zh ? "中" : "EN"} ${target.speaker}`);
+    setDesc(designBrief(target));
+    setName(`${target.style === "idol" ? "Idol" : "Studio"} ${target.lang === "zh" ? "中" : "EN"} ${target.speaker}`);
   }, [target]);
 
   useEffect(() => {
-    if (!target || tab === "design") return;
+    if (!target || shown === "design") return;
     const k = settings.keys;
     if (!k.elevenlabsKey && (k.llmProvider === "hosted" || k.llmProvider === "mock")) {
       setVoices([]);
@@ -317,22 +374,22 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
     let live = true;
     setBusy(true);
     setError(null);
-    const p = new URLSearchParams({ language: target.lang });
+    const p = new URLSearchParams({ language: target.lang, model });
     const url =
-      tab === "recommend"
-        ? `/api/voices?scope=recommend&language=${target.lang}&style=${target.style}&speaker=${target.speaker}`
-        : tab === "mine"
-          ? "/api/voices?scope=mine"
-          : `/api/voices?scope=library&${p}${q ? `&search=${encodeURIComponent(q)}` : ""}`;
+      shown === "mine"
+        ? "/api/voices?scope=mine"
+        : search
+          ? `/api/voices?scope=library&${p}&search=${encodeURIComponent(search)}`
+          : `/api/voices?scope=recommend&${p}&style=${target.style}&speaker=${target.speaker}`;
     getJSON<{ voices: (SharedVoice | VoiceInfo)[] }>(url, headers)
-      .then((r) => live && setVoices(r.voices))
+      .then((r) => live && setVoices(shown === "mine" ? rankAccount(free ? freeUsable(r.voices as VoiceInfo[]) : (r.voices as VoiceInfo[]), target, model) : r.voices))
       .catch((e) => live && setError((e as Error).message))
       .finally(() => live && setBusy(false));
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target, tab]);
+  }, [target, shown, search]);
 
   async function use(v: SharedVoice | VoiceInfo) {
     if ("public_owner_id" in v && v.public_owner_id) {
@@ -372,31 +429,34 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
     }
   }
 
+  const sources: { value: Source; label: string }[] = [
+    ...(free ? [] : [{ value: "recommend" as const, label: T("推荐", "For you") }]),
+    { value: "mine", label: T("我的", "Mine") },
+    { value: "design", label: T("设计", "Design") },
+  ];
+
   return (
     <Dialog open={Boolean(target)} onClose={onClose} label="voices">
       {target && (
         <div className="stack">
           <div className="stack" style={{ gap: 3, paddingRight: 34 }}>
-            <span className="eyebrow">{STYLES[target.style].label[lang]} · {target.lang === "zh" ? "中文" : "English"} · {target.speaker}</span>
+            <span className="eyebrow">{STYLES[target.style].label[lang]} · {target.lang === "zh" ? "中文" : "English"} · {seatRole(target.style, target.speaker, T)}</span>
             <h2 className="headline">{T("为这个位置选一个声音", "Choose a voice for this seat")}</h2>
           </div>
-          <Segmented
-            value={tab}
-            onChange={setTab}
-            label="source"
-            options={[
-              { value: "recommend", label: T("推荐", "For you") },
-              { value: "search", label: T("声音库", "Library") },
-              { value: "mine", label: T("我的", "Mine") },
-              { value: "design", label: T("设计", "Design") },
-            ]}
-          />
-          {tab === "search" && (
-            <form className="paste" style={{ width: "100%", margin: 0 }} onSubmit={(e) => { e.preventDefault(); setTab("recommend"); setTimeout(() => setTab("search")); }}>
-              <input placeholder={T("搜索：podcast、calm、sweet、新闻…", "Search: podcast, calm, sweet, news…")} value={q} onChange={(e) => setQ(e.target.value)} />
+          <Segmented value={shown} onChange={setTab} label="source" options={sources} />
+          {shown === "recommend" && (
+            <form className="paste" style={{ width: "100%", margin: 0 }} onSubmit={(e) => { e.preventDefault(); setSearch(q.trim()); }}>
+              <input
+                placeholder={T("搜索声音库：podcast、calm、sweet、新闻…", "Search the library: podcast, calm, sweet, news…")}
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  if (!e.target.value.trim()) setSearch("");
+                }}
+              />
             </form>
           )}
-          {tab === "design" ? (
+          {shown === "design" ? (
             <div className="stack">
               <textarea className="field" value={desc} onChange={(e) => setDesc(e.target.value)} rows={4} />
               <div className="row">
@@ -406,23 +466,21 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
                 </Button>
               </div>
               <p className="hint">{T("Voice Design 所有套餐可用，只按试听文字计费；保存会占用一个自定义声音位。", "Voice Design works on every plan and bills only the preview text; saving uses a custom voice slot.")}</p>
-              <AnimatePresence>
-                {previews.map((p, i) => (
-                  <motion.div key={p.generated_voice_id} className="voice-row" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...fade, delay: i * 0.06 }}>
-                    <PreviewButton src={`data:${p.media_type};base64,${p.audio_base_64}`} />
-                    <span className="grow">{T(`方案 ${i + 1}`, `Option ${i + 1}`)} · {p.duration_secs.toFixed(1)}s</span>
-                    <Button size="small" variant="primary" onClick={() => saveDesign(p)} disabled={busy}>{T("保存并使用", "Save & use")}</Button>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+              {previews.map((p, i) => (
+                <div key={p.generated_voice_id} className="voice-row">
+                  <PreviewButton src={`data:${p.media_type};base64,${p.audio_base_64}`} />
+                  <span className="grow">{T(`方案 ${i + 1}`, `Option ${i + 1}`)} · {p.duration_secs.toFixed(1)}s</span>
+                  <Button size="small" variant="primary" onClick={() => saveDesign(p)} disabled={busy}>{T("保存并使用", "Save & use")}</Button>
+                </div>
+              ))}
             </div>
           ) : (
             <div>
               {busy && <p className="hint">{T("加载中…", "Loading…")}</p>}
-              {!busy && voices.length === 0 && !error && <p className="hint">{T("没有结果", "No results")}</p>}
+              {!busy && voices.length === 0 && !error && <p className="hint">{shown === "mine" && free ? T("账户里还没有能用的声音：去「设计」用一句话做一个。", "No voices you can use yet: make one under Design.") : T("没有结果", "No results")}</p>}
               {voices.map((v) => (
                 <div key={v.voice_id} className="voice-row">
-                  <PreviewButton src={v.preview_url} />
+                  <PreviewButton src={previewIn(v, target.lang, model)} />
                   <div className="grow">
                     <div className="ellipsis" style={{ fontWeight: 550, fontSize: 14 }}>{v.name}</div>
                     <div className="caption ellipsis">

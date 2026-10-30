@@ -7,6 +7,8 @@ import { Mark } from "./Shell";
 import { Button, MenuItem, Popover, fade } from "../ui/kit";
 import { Check, ChevronDown, Key } from "../ui/icons";
 import { getProfile, saveProfile, type Settings } from "@/lib/client/store";
+import type { VoiceOverrides } from "@/lib/harness/styles";
+import type { Lang } from "@/lib/types";
 import { modelInfo } from "@/lib/tts/models";
 import { track } from "@/lib/client/track";
 import { getTrial, type Trial } from "@/lib/client/api";
@@ -44,7 +46,7 @@ interface ElevenResult {
   ok: boolean;
   error?: string;
   errorZh?: string;
-  account?: { tier: string | null; characterCount: number | null; characterLimit: number | null; canClone: boolean; libraryViaApi: boolean; firstName: string | null; recommendedModel: string | null; missing?: string[] };
+  account?: { tier: string | null; characterCount: number | null; characterLimit: number | null; canClone: boolean; libraryViaApi: boolean; firstName: string | null; recommendedModel: string | null; missing?: string[]; accountVoices?: VoiceOverrides };
 }
 
 async function verify<T>(body: unknown): Promise<T> {
@@ -301,6 +303,7 @@ function missingNote(missing: string[], T: (zh: string, en: string) => string): 
   const parts = [
     missing.includes("models_read") && T("读不到模型列表，默认用 Eleven v4", "can't list models, so Eleven v4 is used"),
     missing.includes("user_read") && T("读不到套餐和余量", "can't read your plan or quota"),
+    missing.includes("voices_read") && T("读不到你账户里的声音", "can't read your account's voices"),
   ].filter(Boolean);
   return T(
     `这把钥匙限定了权限（缺 ${missing.join("、")}）：${parts.join("；")}。生成节目只需要 Text to Speech；换声音还要 Voices 相关权限，片头音乐要 Music Generation。`,
@@ -308,8 +311,17 @@ function missingNote(missing: string[], T: (zh: string, en: string) => string): 
   );
 }
 
+/** What a free plan actually gets: the closest voices already in the account, or none yet. */
+function freeNote(voices: VoiceOverrides | undefined, lang: Lang, T: (zh: string, en: string) => string): string {
+  const seat = voices?.studio?.[lang];
+  const names = seat?.A && seat.B ? `${seat.A.name.split(" –")[0]} × ${seat.B.name.split(" –")[0]}` : null;
+  if (!voices) return T("免费套餐不能通过 API 使用声音库声音；生成时会改用你账户里最接近的声音。免费套餐没有商用授权。", "Free plans can't use Voice Library voices through the API, so each host will use the closest voice in your account. No commercial license on the free plan.");
+  if (!names) return T("免费套餐不能通过 API 使用声音库声音，而你的账户里还没有声音：在「设置 → 声音」里用一句话设计两位主播（所有套餐可用）。", "Free plans can't use Voice Library voices through the API, and your account has no voices yet: design both hosts in Settings → Voices (works on every plan).");
+  return T(`免费套餐不能通过 API 使用声音库声音，所以每位主播会用你账户里最接近的声音（深度访谈：${names}），可在设置里换。免费套餐没有商用授权。`, `Free plans can't use Voice Library voices through the API, so each host uses the closest voice in your account (Studio: ${names}); change them in Settings. No commercial license on the free plan.`);
+}
+
 function ElevenStep({ draft, onDone, onBack }: { draft: Settings; onDone: (s: Settings, name: string | null) => void; onBack: () => void }) {
-  const { T } = useApp();
+  const { T, lang } = useApp();
   const [key, setKey] = useState(draft.keys.elevenlabsKey ?? "");
   const [res, setRes] = useState<ElevenResult | null>(null);
   const [checking, setChecking] = useState(false);
@@ -332,7 +344,10 @@ function ElevenStep({ draft, onDone, onBack }: { draft: Settings; onDone: (s: Se
   const a = res?.account;
   const left = a?.characterLimit != null ? Math.max(0, a.characterLimit - (a.characterCount ?? 0)) : null;
   const next = (skip = false) =>
-    onDone({ ...draft, keys: { ...draft.keys, elevenlabsKey: skip ? undefined : key, elevenlabsModel: a?.recommendedModel ?? undefined, elevenlabsTier: a?.tier ?? undefined } }, skip ? null : (a?.firstName ?? null));
+    onDone(
+      { ...draft, accountVoices: skip ? undefined : a?.accountVoices, keys: { ...draft.keys, elevenlabsKey: skip ? undefined : key, elevenlabsModel: a?.recommendedModel ?? undefined, elevenlabsTier: a?.tier ?? undefined } },
+      skip ? null : (a?.firstName ?? null),
+    );
 
   return (
     <div className="stack-lg">
@@ -355,7 +370,7 @@ function ElevenStep({ draft, onDone, onBack }: { draft: Settings; onDone: (s: Se
               )}
             </div>
             {Boolean(a.missing?.length) && <span className="hint">{missingNote(a.missing!, T)}</span>}
-            {!a.libraryViaApi && <span className="hint">{T("免费套餐不能通过 API 使用声音库声音，生成时会改用你账户里的声音；也没有商用授权。", "Free tier can't use Voice Library voices via API (we'll use your account voices) and has no commercial license.")}</span>}
+            {!a.libraryViaApi && <span className="hint">{freeNote(a.accountVoices, lang, T)}</span>}
           </motion.div>
         )}
         {res && !res.ok && res.error && (

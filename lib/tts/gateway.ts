@@ -29,7 +29,12 @@ async function speech(token: string, model: string, body: Record<string, unknown
     await new Promise((r) => setTimeout(r, 700 * 2 ** attempt + Math.random() * 300));
     return speech(token, model, body, attempt + 1);
   }
-  if (!res.ok || !j.audio) throw new ElevenError(`Speech via AI Gateway failed (${res.status}): ${j.error?.message ?? "no audio"}`, res.status === 402 || res.status === 429 ? res.status : 502);
+  if (!res.ok || !j.audio) {
+    const message = j.error?.message ?? "no audio";
+    // A voice id ElevenLabs doesn't know: say so in the same code the direct path uses, so the voice can be replaced.
+    const missing = /voice_not_found|voice.*(not found|does not exist)/i.test(message);
+    throw new ElevenError(`Speech via AI Gateway failed (${res.status}): ${message}`, missing ? 404 : res.status === 402 || res.status === 429 ? res.status : 502, missing ? "voice_not_found" : undefined);
+  }
   return stripMp3Headers(Uint8Array.from(Buffer.from(j.audio, "base64")));
 }
 

@@ -1,32 +1,37 @@
 import { addSharedVoice, designVoice, ElevenError, listMyVoices, recommendVoices, saveDesignedVoice, searchSharedVoices, type SlotHint } from "@/lib/tts/elevenlabs";
+import { rankLibrary } from "@/lib/tts/voices";
 import { errorResponse, resolveElevenKey } from "@/lib/server/keys";
+import type { Lang } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 function fail(e: unknown) {
-  if (e instanceof ElevenError) return Response.json({ error: e.message }, { status: e.status });
+  if (e instanceof ElevenError) return Response.json({ error: e.message, code: e.code }, { status: e.status });
   return errorResponse(e);
 }
 
-/** GET ?scope=mine | recommend&language&style&speaker | library&language&search&gender&age */
+/** GET ?scope=mine | recommend&language&style&speaker&model | library&language&search&gender&age&model */
 export async function GET(req: Request) {
   try {
     const key = resolveElevenKey(req) ?? "";
     const q = new URL(req.url).searchParams;
     const scope = q.get("scope");
+    const model = q.get("model") ?? undefined;
     if (scope === "recommend") {
-      const hint = { language: q.get("language") ?? "zh", style: q.get("style") ?? "studio", speaker: q.get("speaker") ?? "A" } as SlotHint;
+      const hint = { language: q.get("language") ?? "zh", style: q.get("style") ?? "studio", speaker: q.get("speaker") ?? "A", model } as SlotHint;
       return Response.json({ voices: await recommendVoices(key, hint) });
     }
     if (scope === "library") {
+      const language = (q.get("language") ?? undefined) as Lang | undefined;
       const voices = await searchSharedVoices(key, {
         search: q.get("search") ?? undefined,
-        language: q.get("language") ?? undefined,
+        language,
         gender: q.get("gender") ?? undefined,
         age: q.get("age") ?? undefined,
       });
-      return Response.json({ voices });
+      // The same bar as recommendations: normal credits, a notice period, no live moderation.
+      return Response.json({ voices: rankLibrary(voices, language ?? "en", model) });
     }
     return Response.json({ voices: await listMyVoices(key) });
   } catch (e) {
