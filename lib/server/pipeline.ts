@@ -1,14 +1,20 @@
 import type { Brief, EpisodeRequest, FigureRef, Script, ScriptLine, TestCase, TestResult, Usage } from "../types";
 import type { Harness } from "../harness/genome";
 import { addUsage, callJSON, type LLMConfig } from "../llm";
-import { mockBrief, mockChapter, mockDiagnosis, mockEpisodePlan, mockGrade, mockPlan, mockScript } from "../llm/mock";
-import { BriefWithTestsSchema, ChapterSchema, DiagnosisSchema, EpisodePlanSchema, GradeSchema, NotesSchema, PlanSchema, ScriptSchema, type ChapterOut, type Diagnosis, type EpisodePlan, type Plan } from "../harness/schemas";
+import { atTier } from "../llm/route";
+import { mockAnswer, mockBrief, mockChapter, mockColdOpen, mockDiagnosis, mockEpisodePlan, mockGrade, mockPlan, mockScript } from "../llm/mock";
+import { AnswerSchema, BriefWithTestsSchema, ChapterSchema, ColdOpenSchema, DiagnosisSchema, EpisodePlanSchema, GradeSchema, NotesSchema, PlanSchema, ScriptSchema, type ChapterOut, type ColdOpen, type Diagnosis, type EpisodePlan, type Plan } from "../harness/schemas";
+import { linesSoFar } from "../harness/chapters";
 import {
   analyzerSystem,
   analyzerUser,
+  askContext,
+  askSystem,
+  askUser,
   briefSystem,
   briefUser,
   chapterUser,
+  coldOpenUser,
   gradeSystem,
   gradeUser,
   notesSystem,
@@ -67,7 +73,7 @@ export async function makeBrief(
     const chunks = splitForNotes(text, Math.floor(directBudget(cfg) / 3));
     parts = chunks.length;
     const notes = await pool(chunks, 4, async (chunk, i) => {
-      const r = await callJSON(cfg, {
+      const r = await callJSON(atTier(cfg, "mid"), {
         system: notesSystem(),
         user: `Part ${i + 1} of ${chunks.length}:\n<part>\n${chunk}\n</part>`,
         schema: NotesSchema,
@@ -98,7 +104,7 @@ export async function makeBrief(
 // ------------------------------------------------------------------ stage 2: script (+ verify / revise)
 
 async function writeScript(cfg: LLMConfig, h: Harness, brief: Brief, req: EpisodeRequest, notes: string[], previous?: { script: Script; failures: { check: string; note: string }[] }) {
-  const r = await callJSON(cfg, {
+  const r = await callJSON(atTier(cfg, h.pipeline.writeTier), {
     system: scriptSystem(h, req, notes),
     user: previous ? reviseUser(brief, req, previous.script, previous.failures) : scriptUser(brief, req),
     schema: ScriptSchema,
@@ -113,7 +119,7 @@ async function writeScript(cfg: LLMConfig, h: Harness, brief: Brief, req: Episod
 export async function gradeScript(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest, figures: FigureRef[] = []) {
   const suite = buildTestSuite(docTests, req);
   const rules = checkRules(script, req, h);
-  const r = await callJSON(cfg, {
+  const r = await callJSON(atTier(cfg, h.pipeline.checkTier), {
     system: gradeSystem(),
     user: gradeUser(brief, script, suite, figures),
     schema: GradeSchema,
@@ -190,15 +196,52 @@ export interface ChapterInput {
   figures: FigureRef[];
   /** Minutes per chapter (chapterMinutes). */
   minutes: number[];
+  /** The cold open already playing, which chapter 1 continues. */
+  opening?: ScriptLine[];
 }
 
 const clean = (lines: ScriptLine[]) => lines.filter((l) => l.text.trim());
 
+/**
+ * The cold open, from the source's first pages, on the fastest model: its title and then each line
+ * are sent the moment they are written, so the first line is voiced while the rest is being written.
+ */
+export async function coldOpen(cfg: LLMConfig, h: Harness, req: EpisodeRequest, notes: string[], head: string, emit?: (event: { title?: string; line?: ScriptLine }) => void): Promise<{ open: ColdOpen; usage: Usage }> {
+  let sent = 0;
+  let titled = false;
+  const send = (lines: ScriptLine[]) => {
+    for (; sent < lines.length; sent++) emit?.({ line: lines[sent] });
+  };
+  const r = await callJSON(atTier(cfg, "small"), {
+    system: scriptSystem(h, req, notes, true),
+    user: coldOpenUser(h, req, head),
+    schema: ColdOpenSchema,
+    effort: "low",
+    maxTokens: 6000,
+    mock: () => mockColdOpen(head, req),
+    onText: (_, text) => {
+      const t = titled ? null : text.match(/"title"\s*:\s*("(?:[^"\\]|\\.)*")/);
+      if (t) {
+        titled = true;
+        emit?.({ title: JSON.parse(t[1]) as string });
+      }
+      send(clean(linesSoFar(text)));
+    },
+  });
+  const lines = clean(r.data.lines);
+  // Providers that don't stream (and the demo) hand everything over at the end.
+  if (!titled) emit?.({ title: r.data.title });
+  send(lines);
+  return { open: { title: r.data.title, lines }, usage: r.usage };
+}
+
 /** Plan every chapter and write chapter 1: one call, so the first audio comes as soon as possible. */
 export async function planEpisode(cfg: LLMConfig, h: Harness, x: ChapterInput, onText?: (chars: number) => void): Promise<{ plan: EpisodePlan; usage: Usage }> {
-  const r = await callJSON(cfg, {
+  const p = planUser(h, x.brief, x.req, buildTestSuite(x.tests, x.req), x.figures, x.minutes, x.opening ?? []);
+  const r = await callJSON(atTier(cfg, h.pipeline.writeTier), {
     system: scriptSystem(h, x.req, x.notes, true),
-    user: planUser(h, x.brief, x.req, buildTestSuite(x.tests, x.req), x.figures, x.minutes),
+    prefix: p.prefix,
+    user: p.user,
     schema: EpisodePlanSchema,
     effort: h.pipeline.scriptEffort,
     maxTokens: 16000,
@@ -225,10 +268,11 @@ export async function writeChapter(
   shown: number[],
   onText?: (chars: number) => void,
 ): Promise<{ chapter: ChapterOut; usage: Usage | null; revisions: number }> {
-  const user = chapterUser(h, x.brief, x.req, x.figures, plan, k, x.minutes, last, shown);
+  const { prefix, user } = chapterUser(h, x.brief, x.req, x.figures, plan, k, x.minutes, last, shown);
   const write = (prompt: string) =>
-    callJSON(cfg, {
+    callJSON(atTier(cfg, h.pipeline.writeTier), {
       system: scriptSystem(h, x.req, x.notes, true),
+      prefix,
       user: prompt,
       schema: ChapterSchema,
       effort: h.pipeline.scriptEffort,
@@ -260,7 +304,7 @@ export async function writeChapter(
 
 async function gradeLines(cfg: LLMConfig, h: Harness, brief: Brief, lines: ScriptLine[], suite: TestCase[], figures: FigureRef[]) {
   const script: Script = { title: "", lang: "en", lines, show_notes: [] };
-  const r = await callJSON(cfg, {
+  const r = await callJSON(atTier(cfg, h.pipeline.checkTier), {
     system: gradeSystem(),
     user: gradeUser(brief, script, suite, figures),
     schema: GradeSchema,
@@ -277,11 +321,37 @@ export async function gradeEpisode(cfg: LLMConfig, h: Harness, brief: Brief, doc
   return { results: graded.results, passRate: graded.results.length ? passRate(graded.results) : null, usage: graded.usage };
 }
 
+// ------------------------------------------------------------------ raise hand
+
+/**
+ * The hosts answer a listener's question mid-episode, from the whole source on the fastest model.
+ * The source and brief are cached, so every question after the first reads them at a tenth of the price.
+ */
+export async function answer(cfg: LLMConfig, req: EpisodeRequest, source: string, brief: Brief, question: string, recent: ScriptLine[], emit?: (event: { line: ScriptLine }) => void): Promise<{ lines: ScriptLine[]; usage: Usage }> {
+  let sent = 0;
+  const send = (lines: ScriptLine[]) => {
+    for (; sent < lines.length; sent++) emit?.({ line: lines[sent] });
+  };
+  const r = await callJSON(atTier(cfg, "small"), {
+    system: askSystem(req),
+    prefix: [askContext(source, brief)],
+    user: askUser(question, recent),
+    schema: AnswerSchema,
+    effort: "low",
+    maxTokens: 4000,
+    mock: () => mockAnswer(source, req),
+    onText: (_, text) => send(clean(linesSoFar(text))),
+  });
+  const lines = clean(r.data.lines);
+  send(lines);
+  return { lines, usage: r.usage };
+}
+
 // ------------------------------------------------------------------ the research atlas
 
 /** Name the fields and concepts of everything this person has made episodes from (one cheap call). */
 export async function mapAtlas(cfg: LLMConfig, entries: AtlasEntry[], uiLang: "zh" | "en"): Promise<{ atlas: AtlasWire; usage: Usage }> {
-  const r = await callJSON(cfg, {
+  const r = await callJSON(atTier(cfg, "small"), {
     system: atlasSystem(),
     user: atlasUser(entries.slice(-120), uiLang),
     schema: AtlasWireSchema,
@@ -327,7 +397,7 @@ export async function plan(
 }
 
 export async function planInterface(cfg: LLMConfig, g: UIGenome, stats: string, portrait: string, sessions: string, uiLang: "zh" | "en"): Promise<{ patch: UIPatch; usage: Usage }> {
-  const r = await callJSON(cfg, {
+  const r = await callJSON(atTier(cfg, "mid"), {
     system: uiPlannerSystem(),
     user: uiPlannerUser(g, stats, portrait, sessions, uiLang),
     schema: UIPatchSchema,

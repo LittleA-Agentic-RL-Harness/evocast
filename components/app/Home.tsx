@@ -326,7 +326,7 @@ export default function Home() {
           : {}),
         onSaved: (e) => liveEnd(e),
       });
-      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard });
+      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard, first_ms: eps[0]?.metrics.latencyMs.firstAudio ?? null });
       // Only finished episodes teach the prefill; cancelled or failed runs aren't choices.
       await addSession(session);
       if (profile.minutesBias[recipe.persona]) await saveProfile({ ...profile, minutesBias: { ...profile.minutesBias, [recipe.persona]: 0 } });
@@ -898,7 +898,9 @@ function LiveCard({ run, onOpen }: { run: Run; onOpen: () => void }) {
       <span className="caption">
         {other
           ? T(`正在做${other === "en" ? "英文" : "中文"}版（${Math.min(p?.chapters ?? 1, (p?.chapter ?? 0) + 1)}/${p?.chapters ?? 1}）`, `Making the ${other === "en" ? "English" : "Chinese"} episode (${Math.min(p?.chapters ?? 1, (p?.chapter ?? 0) + 1)}/${p?.chapters ?? 1})`)
-          : writing
+          : d.written === 0
+            ? T("开场在播，同时读完全文，第 1 章随后接上", "The opening plays while the whole source is read; chapter 1 follows")
+            : writing
             ? T(`第 ${d.written + 1} 章正在写，已配好 ${d.voiced}/${d.chapters} 章`, `Writing chapter ${d.written + 1}; ${d.voiced} of ${d.chapters} voiced`)
             : d.voiced < d.chapters
               ? T(`正在配音第 ${d.voiced + 1} 章`, `Voicing chapter ${d.voiced + 1}`)

@@ -148,6 +148,19 @@ export interface Episode extends EpisodeRequest {
   visuals?: Visual[];
   figures?: FigureRef[];
   feedback?: Feedback;
+  /** Questions the listener asked mid-episode (raise hand), with the hosts' answers. */
+  asks?: Ask[];
+}
+
+/** A raised hand: the question, where in the episode it was asked, and how the hosts answered. */
+export interface Ask {
+  /** Index of the line playing when the hand went up. */
+  at: number;
+  question: string;
+  lines: ScriptLine[];
+  askedAt: string;
+  /** From the end of the question to the first word of the answer (ms). */
+  ms?: number;
 }
 
 export type VoiceChange =

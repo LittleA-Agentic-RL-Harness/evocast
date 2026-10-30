@@ -259,6 +259,20 @@ textarea.field { resize: vertical; min-height: 89px; line-height: 1.5; }
 .np-foot { grid-area: foot; display: grid; gap: 2px; padding-top: var(--s3); }
 .np-foot .transport { position: relative; }
 .np-rate-btn { position: absolute; left: 0; }
+/* Raise hand: right of +30, mirroring the speed button. While it listens, a 2px ring whose opacity
+   follows the voice; nothing grows or moves. */
+.np-hand { position: absolute; right: 0; }
+.hand { width: 44px; height: 44px; border-radius: 999px; border: 0; background: transparent; color: var(--label); display: grid; place-items: center; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.hand > * { grid-area: 1 / 1; }
+.hand-ring { width: 44px; height: 44px; border-radius: 999px; box-shadow: inset 0 0 0 2px var(--accent); opacity: 0; pointer-events: none; }
+.hand[aria-pressed="true"] .hand-ring { opacity: .3; }
+.hand[aria-pressed="false"] .hand-ring { opacity: 0 !important; }
+.ask-bar { display: flex; align-items: center; min-height: 20px; padding-bottom: var(--s2); }
+.ask-input { height: 44px; border-radius: 13px; flex: 1; min-width: 0; }
+.t-ask { margin: 4px 0 8px 16px; display: grid; }
+.t-ask .t-line { cursor: default; }
+.t-ask .t-q, .t-ask .t-now { color: var(--label); }
+.t-ask .t-q .t-who, .t-ask .t-now .t-who { color: var(--accent); }
 .np-rate-mobile, .np-chips-mobile { display: none; }
 .visual { min-height: 0; border-radius: var(--r3); background: var(--fill); overflow: hidden; display: grid; }
 .visual-in { min-height: 0; height: 100%; display: grid; align-items: center; justify-items: center; padding: var(--s4); gap: var(--s4); }
@@ -289,7 +303,7 @@ textarea.field { resize: vertical; min-height: 89px; line-height: 1.5; }
 .term-plain { margin-top: 6px; font-size: 16px; line-height: 1.5; color: var(--label-2); }
 .sketch.compact .flow li, .sketch.compact .example-row { padding: 7px 10px; }
 .sketch.compact .flow-label, .sketch.compact .example-row { font-size: 14px; }
-.t-window { min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 30px 0; mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); }
+.t-window { position: relative; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 30px 0; mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); }
 .t-chapter { padding: 14px 10px 4px 75px; font-size: 12.6px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--label-3); }
 .t-line.pending { opacity: .5; cursor: default; }
 .t-wait { display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 75px; }

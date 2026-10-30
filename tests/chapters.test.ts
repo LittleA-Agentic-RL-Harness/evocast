@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chapterAt, chapterMinutes, numberIn, placeVisuals, visualAt, type WireVisual } from "../lib/harness/chapters";
+import { chapterAt, chapterMinutes, linesSoFar, numberIn, placeVisuals, visualAt, type WireVisual } from "../lib/harness/chapters";
 import { DEFAULT_RECIPE, habitRecipe, MINUTES, snapMinutes, coerceRecipe, changedFields } from "../lib/harness/ui";
-import { chapterUser, planUser, scriptSystem } from "../lib/harness/prompts";
+import { chapterUser, coldOpenUser, planUser, scriptSystem } from "../lib/harness/prompts";
 import { topicOf } from "../lib/harness/prefill";
 import { mockEpisodePlan, mockChapter, mockBrief } from "../lib/llm/mock";
 import { SEED_MEDIUM } from "../lib/harness/genome";
@@ -83,18 +83,52 @@ test("chapter prompts: the plan asks for every chapter and its length; later cha
   assert.match(sys, /## Chapters/);
   assert.match(sys, /## Visuals/);
   assert.doesNotMatch(scriptSystem(SEED_MEDIUM, req, []), /## Visuals/);
-  const plan = planUser(SEED_MEDIUM, brief, req, tests, figures, minutes);
+  const text = (p: { prefix: string[]; user: string }) => [...p.prefix, p.user].join("\n\n");
+  const planned = planUser(SEED_MEDIUM, brief, req, tests, figures, minutes);
+  const plan = text(planned);
   assert.match(plan, new RegExp(`as ${minutes.length} chapters`));
   assert.match(plan, /\[1\] Figure 1: Overview of the method/);
   assert.match(plan, /T1 \[coverage\]/);
   const p = { title: "Ep", chapters: minutes.map((_, i) => ({ title: `C${i + 1}`, goal: "g", covers: [] })) };
-  const second = chapterUser(SEED_MEDIUM, brief, req, figures, p, 1, minutes, [{ speaker: "A", text: "So that was the hook." }], [1]);
-  assert.match(second, /1\. C1 — g \(done\)/);
-  assert.match(second, /2\. C2 — g {2}← write this one/);
-  assert.match(second, /Figures already shown: 1\./);
+  const chapter2 = chapterUser(SEED_MEDIUM, brief, req, figures, p, 1, minutes, [{ speaker: "A", text: "So that was the hook." }], [1]);
+  const second = text(chapter2);
+  assert.match(second, /1\. C1 — g\n2\. C2 — g/);
+  assert.match(second, /Chapters 1–1 are written\. Figures already shown: 1\./);
+  assert.match(second, /Write chapter 2, "C2"/);
   assert.match(second, /A: So that was the hook\./);
   assert.match(second, /Don't wrap up/);
-  assert.match(chapterUser(SEED_MEDIUM, brief, req, figures, p, minutes.length - 1, minutes, [], []), /last chapter/);
+  assert.match(text(chapterUser(SEED_MEDIUM, brief, req, figures, p, minutes.length - 1, minutes, [], [])), /last chapter/);
+  // Calls writing one episode share their opening word for word, so it is cached once and read after.
+  assert.equal(chapter2.prefix[0], planned.prefix[0]);
+  assert.deepEqual(chapterUser(SEED_MEDIUM, brief, req, figures, p, 2, minutes, [], [1, 2]).prefix, chapter2.prefix);
+  assert.doesNotMatch(chapter2.prefix.join(""), /So that was the hook|Figures already shown/);
+});
+
+test("cold open: chapter 1 continues it and is shorter by what it already said", () => {
+  const { brief, tests } = mockBrief("Abstract. We propose a method that is tested well on many benchmarks and it works. ".repeat(20));
+  const minutes = chapterMinutes(15);
+  const opening = [{ speaker: "A" as const, text: "x".repeat(300) }];
+  const without = planUser(SEED_MEDIUM, brief, req, tests, [], minutes).user;
+  const after = planUser(SEED_MEDIUM, brief, req, tests, [], minutes, opening).user;
+  assert.doesNotMatch(without, /cold_open/);
+  assert.match(after, /<cold_open>\nA: x+\n<\/cold_open>/);
+  const first = (u: string) => Number(u.match(/per chapter: 1: ~(\d+)/)![1]);
+  assert.equal(first(without) - first(after), 300);
+  assert.match(coldOpenUser(SEED_MEDIUM, req, "Title. Abstract: a claim."), /<opening_pages>\nTitle\. Abstract: a claim\.\n<\/opening_pages>/);
+});
+
+test("lines as they are written: only finished objects, strings with braces and escapes intact", () => {
+  const full = JSON.stringify({ title: "T", lines: [{ speaker: "A", text: 'He said "{not a brace}" \\ done' }, { speaker: "B", text: "第二句。" }, { speaker: "A", text: "third" }] });
+  assert.deepEqual(linesSoFar(full).map((l) => l.text), ['He said "{not a brace}" \\ done', "第二句。", "third"]);
+  // Cut mid-way through the third line: two are complete.
+  const cut = full.slice(0, full.indexOf("third") + 2);
+  assert.deepEqual(linesSoFar(cut).map((l) => l.speaker), ["A", "B"]);
+  assert.deepEqual(linesSoFar('{"title":"T","li'), []);
+  // Each prefix of the stream yields a prefix of the final lines.
+  for (let i = 0; i <= full.length; i += 7) {
+    const got = linesSoFar(full.slice(0, i));
+    assert.deepEqual(got, linesSoFar(full).slice(0, got.length));
+  }
 });
 
 test("demo chapters: a plan with every chapter, and something to look at", () => {

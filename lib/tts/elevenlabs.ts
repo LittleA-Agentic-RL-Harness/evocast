@@ -434,3 +434,15 @@ export async function composeSting(key: string, prompt: string, ms = 7000): Prom
   }
   return new Uint8Array(await res.arrayBuffer());
 }
+
+/** Speech to text with ElevenLabs Scribe: a listener's spoken question, in their language. */
+export async function transcribe(key: string, audio: Uint8Array, mediaType: string, lang?: string): Promise<{ text: string; seconds: number }> {
+  const form = new FormData();
+  form.append("model_id", "scribe_v2");
+  form.append("file", new Blob([audio as BlobPart], { type: mediaType }), "question");
+  if (lang) form.append("language_code", lang);
+  form.append("tag_audio_events", "false");
+  const res = await el(key, "/v1/speech-to-text", { method: "POST", body: form });
+  const j = (await res.json()) as { text?: string; words?: { end?: number }[] };
+  return { text: (j.text ?? "").trim(), seconds: j.words?.at(-1)?.end ?? 0 };
+}

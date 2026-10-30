@@ -1,6 +1,6 @@
 "use client";
 
-import type { ClientKeys, Episode, Lang, Mode } from "../types";
+import type { Ask, ClientKeys, Episode, Lang, Mode } from "../types";
 import type { Harness } from "../harness/genome";
 import { SEEDS } from "../harness/genome";
 import type { VoiceOverrides } from "../harness/styles";
@@ -55,7 +55,21 @@ export async function listEpisodes(): Promise<Episode[]> {
   const all = await idb.all<Episode>("episodes");
   return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
-export const saveEpisode = (e: Episode) => idb.put("episodes", e.id, e);
+/** Questions asked while an episode was still being made: they join it the moment it is saved. */
+const pendingAsks = new Map<string, Ask[]>();
+
+export function saveEpisode(e: Episode) {
+  const waiting = pendingAsks.get(e.id);
+  pendingAsks.delete(e.id);
+  return idb.put("episodes", e.id, waiting ? { ...e, asks: [...(e.asks ?? []), ...waiting] } : e);
+}
+
+/** Keep a raised hand with its episode (or until the episode is saved). */
+export async function addAsk(id: string, ask: Ask) {
+  const e = await getEpisode(id);
+  if (!e) pendingAsks.set(id, [...(pendingAsks.get(id) ?? []), ask]);
+  else await idb.put("episodes", id, { ...e, asks: [...(e.asks ?? []), ask] });
+}
 export const getEpisode = (id: string) => idb.get<Episode>("episodes", id);
 export const getAudio = (id: string) => idb.get<Blob>("audio", id);
 export const saveAudio = (id: string, blob: Blob) => idb.put("audio", id, blob);

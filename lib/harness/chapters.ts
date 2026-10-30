@@ -65,3 +65,39 @@ export function numberIn(value: string): number | null {
   const m = value.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
   return m ? Number(m[0]) : null;
 }
+
+/**
+ * The complete objects of the `"lines"` array in JSON the model is still writing, so each line can
+ * be voiced the moment it is written. Objects still being written are left for the next call.
+ */
+export function linesSoFar(json: string): ScriptLine[] {
+  const key = json.search(/"lines"\s*:\s*\[/);
+  if (key < 0) return [];
+  const out: ScriptLine[] = [];
+  let i = json.indexOf("[", key) + 1;
+  let depth = 0;
+  let start = -1;
+  let str = false;
+  for (; i < json.length; i++) {
+    const ch = json[i];
+    if (str) {
+      if (ch === "\\") i++;
+      else if (ch === '"') str = false;
+      continue;
+    }
+    if (ch === '"') str = true;
+    else if (ch === "{") {
+      if (depth++ === 0) start = i;
+    } else if (ch === "}") {
+      if (--depth === 0) {
+        try {
+          const o = JSON.parse(json.slice(start, i + 1)) as Partial<ScriptLine>;
+          if ((o.speaker === "A" || o.speaker === "B") && typeof o.text === "string") out.push({ speaker: o.speaker, text: o.text });
+        } catch {
+          /* not an object we can read: skip it */
+        }
+      }
+    } else if (ch === "]" && depth === 0) break;
+  }
+  return out;
+}

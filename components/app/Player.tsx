@@ -6,6 +6,7 @@ import { useApp } from "./context";
 import Artwork from "../ui/Artwork";
 import { MenuItem, Popover, Segmented, Sheet, fade } from "../ui/kit";
 import { useFigures, VisualPanel } from "./Visual";
+import { AskBar, AskBlock, HandButton, useRaiseHand } from "./Ask";
 import { chapterAt, visualAt } from "@/lib/harness/chapters";
 import { lineStarts } from "@/lib/format";
 import { Back15, Fwd30, More, Pause, Play, ThumbDown, ThumbUp, Xmark } from "../ui/icons";
@@ -141,10 +142,20 @@ export function NowPlaying() {
   }, [starts, player.time]);
   const chapter = chapterAt(e?.chapters, active);
   const visual = visualAt(e?.visuals, active);
+  const hand = useRaiseHand(e, active, starts[active + 1] ?? Infinity);
+
+  // While the hosts answer a question, the answer stays in the middle of the transcript window.
+  useEffect(() => {
+    if (!hand.current) return;
+    const box = listRef.current;
+    const blocks = box?.querySelectorAll<HTMLElement>("[data-ask]");
+    const block = blocks?.[blocks.length - 1];
+    if (box && block) box.scrollTo({ top: block.offsetTop + block.offsetHeight - box.clientHeight / 2, behavior: "smooth" });
+  }, [hand.current?.question, hand.current?.lines.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The transcript is a fixed window: the line being spoken stays in the middle, and the page never scrolls.
   useEffect(() => {
-    if (!player.sheet || tab !== "transcript" || Date.now() - userScroll.current < 4000) return;
+    if (!player.sheet || tab !== "transcript" || Date.now() - userScroll.current < 4000 || hand.current) return;
     const box = listRef.current;
     const row = box?.querySelector<HTMLElement>(`[data-i="${active}"]`);
     if (box && row) box.scrollTo({ top: row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2, behavior: "smooth" });
@@ -235,7 +246,11 @@ export function NowPlaying() {
           <div className="np-title">
             <h2 className="headline ellipsis">{e.title}</h2>
             <span className="caption ellipsis">
-              {chapters.length ? `${chapter + 1}/${live?.chapters ?? chapters.length} · ${chapters[chapter]?.title ?? ""}` : `${PERSONAS[e.persona].label[lang]} · ${STYLES[e.style].label[lang]}`}
+              {live && live.written === 0
+                ? T("开场 · 同时在读全文，第 1 章随后接上", "Opening · reading the whole source, chapter 1 follows")
+                : chapters.length
+                  ? `${chapter + 1}/${live?.chapters ?? chapters.length} · ${chapters[chapter]?.title || T("开场", "Opening")}`
+                  : `${PERSONAS[e.persona].label[lang]} · ${STYLES[e.style].label[lang]}`}
             </span>
           </div>
           <Popover
@@ -281,7 +296,7 @@ export function NowPlaying() {
                   <li key={i}>
                     <button className={i === chapter ? "on" : ""} disabled={!ready} onClick={() => seek(starts[c.start] + 0.01)}>
                       <span className="tabular">{i + 1}</span>
-                      <span className="grow ellipsis">{c.title}</span>
+                      <span className="grow ellipsis">{c.title || T("开场", "Opening")}</span>
                       {state && <span className="caption">{live && i === live.written ? <span className="breath dim" /> : null}{state}</span>}
                     </button>
                   </li>
@@ -331,6 +346,7 @@ export function NowPlaying() {
                       <span className="t-who">{names[l.speaker]}</span>
                       <span>{stripTags(l.text)}</span>
                     </button>
+                    {hand.asks.map((a, k) => a.at === i && <AskBlock key={k} ask={a} names={names} live={a === hand.current} />)}
                   </div>
                 ))}
                 {live && player.live?.waiting && (
@@ -381,7 +397,8 @@ export function NowPlaying() {
         </section>
 
         <footer className="np-foot">
-          {fb.rating !== 0 && <div className="np-chips-mobile">{chips}</div>}
+          {fb.rating !== 0 && !hand.typing && <div className="np-chips-mobile">{chips}</div>}
+          <AskBar hand={hand} />
           <Scrubber marks={marks} edge={edge} center={<span className="np-rate-mobile">{rating}</span>} />
           <div className="transport">
             <button className="btn small np-rate-btn" onClick={() => setRate(RATES[(RATES.indexOf(player.rate) + 1) % RATES.length])} aria-label={T("播放速度", "Playback speed")}>
@@ -396,6 +413,7 @@ export function NowPlaying() {
             <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => skip(30)} aria-label="+30s">
               <Fwd30 size={26} />
             </button>
+            <HandButton hand={hand} />
           </div>
         </footer>
       </div>

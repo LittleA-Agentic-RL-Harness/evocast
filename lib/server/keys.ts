@@ -21,6 +21,11 @@ function envFallback(req: Request, name: string): string | undefined {
 }
 
 export function resolveLLM(req: Request): LLMConfig {
+  const cfg = resolveModel(req);
+  return req.headers.get("x-llm-route") === "off" ? { ...cfg, route: false } : cfg;
+}
+
+function resolveModel(req: Request): LLMConfig {
   const h = req.headers;
   const provider = (h.get("x-llm-provider") ?? "anthropic") as LLMConfig["provider"] | "hosted";
   const price = h.get("x-llm-price");

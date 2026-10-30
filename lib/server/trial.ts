@@ -77,7 +77,7 @@ async function spentToday(db: DB, who: string): Promise<{ all: number; mine: num
   return { all: Number(r?.all_usd ?? 0), mine: Number(r?.mine ?? 0) };
 }
 
-export type TrialKind = "llm" | "tts" | "music";
+export type TrialKind = "llm" | "tts" | "music" | "stt";
 export interface Meter {
   /** Throws TrialError once today's visitor or site cap is reached. */
   admit(): Promise<void>;

@@ -46,10 +46,18 @@ export async function postJSON<T>(path: string, body: unknown, headers: Record<s
 }
 
 /**
- * A long call with live progress: `onProgress(chars)` while the model writes, then the result.
- * Errors that arrive mid-stream carry the same codes as plain responses.
+ * A long call with live progress: `onProgress(chars)` while the model writes, `onEvent` for what the
+ * server sends on the way (a line of dialogue as it is written), then the result. Errors that arrive
+ * mid-stream carry the same codes as plain responses.
  */
-export async function postStream<T>(path: string, body: unknown, headers: Record<string, string>, onProgress: (chars: number) => void, signal?: AbortSignal): Promise<T> {
+export async function postStream<T>(
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+  onProgress: (chars: number) => void,
+  signal?: AbortSignal,
+  onEvent?: (event: Record<string, unknown>) => void,
+): Promise<T> {
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `${path} failed (${res.status})`);
   if (!res.body || !(res.headers.get("content-type") ?? "").includes("ndjson")) return (await res.json()) as T;
@@ -67,6 +75,7 @@ export async function postStream<T>(path: string, body: unknown, headers: Record
       if (m.p !== undefined) onProgress(m.p);
       else if ("ok" in m) return m.ok as T;
       else if (m.error) throw new ApiError(m.error, m.code ?? (m.status === 429 ? "rate_limited" : undefined));
+      else onEvent?.(m);
     }
   }
   throw new ApiError(`${path} ended before its result`);

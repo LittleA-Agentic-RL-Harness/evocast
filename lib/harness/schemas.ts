@@ -58,6 +58,12 @@ export const EpisodePlanSchema = z.object({
 
 export const ChapterSchema = z.object({ lines: LinesSchema, visuals: z.array(VisualSchema) });
 
+/** The hosts' answer to a listener's question. */
+export const AnswerSchema = z.object({ lines: LinesSchema });
+
+/** The cold open, written from the source's first pages while the whole of it is read. */
+export const ColdOpenSchema = z.object({ title: z.string(), lines: LinesSchema });
+
 export const GradeSchema = z.object({
   results: z.array(z.object({ id: z.string(), pass: z.boolean(), note: z.string() })),
 });
@@ -86,5 +92,6 @@ export const PlanSchema = z.object({
 
 export type EpisodePlan = z.infer<typeof EpisodePlanSchema>;
 export type ChapterOut = z.infer<typeof ChapterSchema>;
+export type ColdOpen = z.infer<typeof ColdOpenSchema>;
 export type Diagnosis = z.infer<typeof DiagnosisSchema>;
 export type Plan = z.infer<typeof PlanSchema>;

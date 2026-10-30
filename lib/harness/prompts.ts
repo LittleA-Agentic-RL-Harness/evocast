@@ -10,6 +10,7 @@ import { TTS_MODEL_INFO } from "../tts/models";
 
 // --------------------------------------------------------------------------- brief + tests
 
+
 export function briefSystem(h: Harness): string {
   return `You are the research analyst behind "Evocast", a show that turns long AI papers, industry reports and news into short two-host audio briefings for busy builders and decision-makers (by default a team building AI-native commerce: agents, harness engineering, personal matching, supply chain, fintech).
 
@@ -138,20 +139,37 @@ function figuresBlock(figures: FigureRef[]): string {
 
 const chars = (h: Harness, lang: Lang, minutes: number) => Math.round(h.script.charsPerMinute[lang] * minutes);
 
-/** First call of a chaptered episode: plan every chapter, then write chapter 1. */
-export function planUser(h: Harness, brief: Brief, req: EpisodeRequest, tests: TestCase[], figures: FigureRef[], minutes: number[]): string {
-  return `${scriptUser(brief, req).replace(/\n\nWrite the episode now\.$/, "")}
+/** A request in parts: `prefix` is shared word for word by the calls that write one episode, so it is cached. */
+export interface Prompt {
+  prefix: string[];
+  user: string;
+}
 
-${figuresBlock(figures)}<tests>
+/** What every call writing this episode reads first: the listener's request, the brief, the source's figures. */
+function episodeContext(brief: Brief, req: EpisodeRequest, figures: FigureRef[]): string {
+  return `${scriptUser(brief, req).replace(/\n\nWrite the episode now\.$/, "")}\n\n${figuresBlock(figures)}`.trimEnd();
+}
+
+const transcript = (lines: ScriptLine[]) => lines.map((l) => `${l.speaker}: ${l.text}`).join("\n");
+
+/** First call of a chaptered episode: plan every chapter, then write chapter 1 (after the cold open, when one is playing). */
+export function planUser(h: Harness, brief: Brief, req: EpisodeRequest, tests: TestCase[], figures: FigureRef[], minutes: number[], opening: ScriptLine[] = []): Prompt {
+  const said = opening.reduce((n, l) => n + l.text.length, 0);
+  // The cold open already used part of chapter 1's time.
+  const sizes = minutes.map((m, i) => (i ? chars(h, req.lang, m) : Math.max(Math.round(chars(h, req.lang, m) * 0.4), chars(h, req.lang, m) - said)));
+  return {
+    prefix: [episodeContext(brief, req, figures)],
+    user: `<tests>
 ${tests.map((t) => `${t.id} [${t.kind}] ${t.check}`).join("\n")}
 </tests>
-
+${opening.length ? `\nThe episode has already opened with this cold open, recorded from the source's first pages and playing now:\n<cold_open>\n${transcript(opening)}\n</cold_open>\nChapter 1 continues straight from its last line: no greeting, no re-introducing the hosts or the source, don't repeat its hook. Answer or build on where it left off, now with the whole brief.\n` : ""}
 Plan this ${req.minutes}-minute episode as ${minutes.length} chapters, then write chapter 1.
-Spoken characters per chapter: ${minutes.map((m, i) => `${i + 1}: ~${chars(h, req.lang, m)}`).join(", ")}.
-- Chapter 1 opens with the hook and why it matters. The last chapter ends with the takeaways, an open question and the sign-off.
+Spoken characters per chapter: ${sizes.map((n, i) => `${i + 1}: ~${n}`).join(", ")}.
+- Chapter 1 ${opening.length ? "picks up from the cold open and says why it matters" : "opens with the hook and why it matters"}. The last chapter ends with the takeaways, an open question and the sign-off.
 - Each chapter: a short "title" in the script language (a few words), a one-sentence "goal" in English, and "covers": the ids of the tests above it should satisfy (every coverage test belongs to some chapter).
 
-Return: "title" (catchy episode title in the script language), "show_notes" (3–5 one-sentence takeaways in the script language), "chapters" (all ${minutes.length}), "lines" (chapter 1 only, about ${chars(h, req.lang, minutes[0])} characters) and "visuals" (for chapter 1).`;
+Return: "title" (catchy episode title in the script language), "show_notes" (3–5 one-sentence takeaways in the script language), "chapters" (all ${minutes.length}), "lines" (chapter 1 only${opening.length ? ", after the cold open" : ""}, about ${sizes[0]} characters) and "visuals" (for chapter 1).`,
+  };
 }
 
 export interface ChapterPlan {
@@ -159,7 +177,7 @@ export interface ChapterPlan {
   chapters: { title: string; goal: string; covers: string[] }[];
 }
 
-/** Chapter k (0-based, k ≥ 1) of a planned episode, picking up where the last one ended. */
+/** Chapter k (from 0): the episode context and the plan are shared by every chapter call, so they are cached. */
 export function chapterUser(
   h: Harness,
   brief: Brief,
@@ -170,21 +188,42 @@ export function chapterUser(
   minutes: number[],
   last: ScriptLine[],
   shown: number[],
-): string {
+): Prompt {
   const final = k === plan.chapters.length - 1;
   const c = plan.chapters[k];
-  return `${scriptUser(brief, req).replace(/\n\nWrite the episode now\.$/, "")}
-
-${figuresBlock(figures)}<plan title="${plan.title.replace(/"/g, "'")}">
-${plan.chapters.map((x, i) => `${i + 1}. ${x.title} — ${x.goal}${i < k ? " (done)" : i === k ? "  ← write this one" : ""}`).join("\n")}
-</plan>
-${shown.length ? `\nFigures already shown: ${shown.join(", ")}.\n` : ""}
+  return {
+    prefix: [
+      episodeContext(brief, req, figures),
+      `<plan title="${plan.title.replace(/"/g, "'")}">\n${plan.chapters.map((x, i) => `${i + 1}. ${x.title} — ${x.goal}`).join("\n")}\n</plan>`,
+    ],
+    user: `Chapters 1–${k} are written.${shown.length ? ` Figures already shown: ${shown.join(", ")}.` : ""}
 The episode so far ends with:
-${last.map((l) => `${l.speaker}: ${l.text}`).join("\n")}
+${transcript(last)}
 
 Write chapter ${k + 1}, "${c.title}": about ${chars(h, req.lang, minutes[k])} spoken characters. Pick up right where the conversation left off. ${final ? "This is the last chapter: end with the takeaways in the listener's format, one open question and a one-line sign-off." : "Don't wrap up the episode; end on a natural turn toward what comes next."}
 
-Return: "lines" (this chapter only) and "visuals" (for this chapter).`;
+Return: "lines" (this chapter only) and "visuals" (for this chapter).`,
+  };
+}
+
+/** Seconds of cold open: enough to cover reading the whole source, short enough to stay a teaser. */
+export const COLD_OPEN_SEC = 70;
+
+/**
+ * The cold open, written from the source's first pages while the whole of it is still being read:
+ * the listener hears it within seconds of pressing play.
+ */
+export function coldOpenUser(h: Harness, req: EpisodeRequest, head: string): string {
+  return `<opening_pages>
+${head}
+</opening_pages>
+
+Write only the episode's cold open: the first ~${COLD_OPEN_SEC} seconds the listener hears, about ${chars(h, req.lang, COLD_OPEN_SEC / 60)} spoken characters, 4–8 turns. The full document is still being read, so for this part the opening pages above are your only source.
+- Start on the most striking claim, question or number these pages contain, said plainly. Then what the source is (its title, shortened) and why it matters now. End on the question the rest of the episode will answer, without answering it.
+- Only what these pages say: no results, numbers or conclusions that aren't on them.
+- No greeting, no show intro, no "welcome": the hook comes first.
+
+Return "title" (a short, catchy episode title in the script language) and "lines".`;
 }
 
 export function scriptUser(brief: Brief, req: EpisodeRequest): string {
@@ -279,7 +318,7 @@ ${PLANNER_PRIORITIES[priority]}
 ${scope === "script" ? "\nSCOPE: script stage only. Candidates are replayed on stored briefs, so do NOT edit brief.* or pipeline.briefEffort — those changes cannot be measured this round.\n" : ""}
 Editable paths and ops:
 - List paths (ops add / remove / replace / set): brief.rules, script.rules, script.structure. For remove/replace give "match" = a distinctive substring of the existing item. For set give "value" = JSON array of strings.
-- Scalar paths (op set; value as text): brief.maxFindings (3–10), script.hookLines (1–4), script.maxTurnChars.zh (40–400), script.maxTurnChars.en (120–1000), script.reactionsPerMinute (0–4), script.audioTags ("none" | "light" | "normal"), script.charsPerMinute.zh (150–400), script.charsPerMinute.en (500–1200), pipeline.briefEffort / pipeline.scriptEffort ("low" | "medium" | "high"), pipeline.grade ("true" | "false"), pipeline.revise ("true" | "false"), pipeline.maxRevisions (0–2).
+- Scalar paths (op set; value as text): brief.maxFindings (3–10), script.hookLines (1–4), script.maxTurnChars.zh (40–400), script.maxTurnChars.en (120–1000), script.reactionsPerMinute (0–4), script.audioTags ("none" | "light" | "normal"), script.charsPerMinute.zh (150–400), script.charsPerMinute.en (500–1200), pipeline.briefEffort / pipeline.scriptEffort ("low" | "medium" | "high"), pipeline.grade ("true" | "false"), pipeline.revise ("true" | "false"), pipeline.maxRevisions (0–2), pipeline.writeTier ("top" = the reading model writes the chapters, "mid" = a faster, cheaper model of the same family does), pipeline.checkTier ("top" | "mid" | "small": the model that grades). A lighter tier is worth trying when the pass rate holds; go back up when the diagnoses blame the writing itself.
 - Unused fields: set "match" to "" for add/set, and "value" to "" for remove.
 
 Constraints:
@@ -303,4 +342,42 @@ export function plannerUser(
       ? peers.map((p) => `${p.id} (pass=${p.pass ?? "?"}, cost=$${p.cost ?? "?"}) diff vs this harness:\n${p.diff.join("\n") || "(identical)"}`).join("\n\n")
       : "(none)"
   }\n</other_candidates>`;
+}
+
+// --------------------------------------------------------------------------- raise hand
+
+/** Characters of the source an answer reads (a long paper's opening 120k: most papers whole). */
+export const ASK_SOURCE_CHARS = 120_000;
+
+/** The hosts answering a listener mid-episode. Stable per show and listener, so it is cached with the source. */
+export function askSystem(req: EpisodeRequest): string {
+  const p = PERSONAS[req.persona];
+  const s = STYLES[req.style];
+  return `You are the two hosts of "Evocast", in the middle of an episode about the source below. The listener just raised a hand and asked a question. Answer it, in voice, then hand back to the episode.
+
+Speaker A — ${s.roles.A}
+Speaker B — ${s.roles.B}
+Tone: ${s.tone}
+Listener: ${p.label.en}. ${p.wants}
+
+## Language: ${req.lang === "zh" ? "Chinese (Mandarin, simplified)" : "English"}, whatever language the question is in
+${LANG_RULES[req.lang].map((r) => `- ${r}`).join("\n")}
+
+## Rules
+- Answer from the source (and the brief) only. When it doesn't say, say so in one sentence, then give what it does say that comes closest. Never guess numbers.
+- 2–4 short turns, about ${req.lang === "zh" ? "120–220 characters" : "60–120 words"} in all: A answers the question directly in the first sentence; B adds one concrete detail, number or caveat from the source, and where it is in the source when that helps ("in the results table", "section 3").
+- Spoken style for the ear: no lists, no markdown, no URLs, no citations in brackets. No square-bracket tags.
+- At most one short acknowledgement of the question, then the answer.
+- The last turn ends with a brief handback to the episode, a few words.
+
+Return "lines" (array of {"speaker": "A" | "B", "text"}).`;
+}
+
+/** The source and the brief: the same for every question about one episode, so cached after the first. */
+export function askContext(source: string, brief: Brief): string {
+  return `<source>\n${source.slice(0, ASK_SOURCE_CHARS)}\n</source>\n\n<brief>\n${JSON.stringify(brief)}\n</brief>`;
+}
+
+export function askUser(question: string, recent: ScriptLine[]): string {
+  return `${recent.length ? `Where the episode is now (the last lines heard):\n${transcript(recent)}\n\n` : ""}The listener asks: "${question.replace(/"/g, "'")}"`;
 }

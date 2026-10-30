@@ -83,6 +83,21 @@ interface Ctx {
   liveAudio: (bytes: Uint8Array, seconds: number, d: Draft) => void;
   liveDraft: (d: Draft) => void;
   liveEnd: (e?: Episode) => void;
+  /** Raise hand: the episode pauses for an answer, which plays on a channel of its own. */
+  aside: Aside;
+}
+
+export interface Aside {
+  /** Call inside the tap, so the answer may play by itself a few seconds later. */
+  prime: () => void;
+  /** Let the line being spoken finish (up to 1.5 s, until `lineEnd`), then pause; says whether it was playing. */
+  hold: (lineEnd: number) => Promise<boolean>;
+  /** Play one clip of the answer; resolves when it has been heard. */
+  play: (bytes: Uint8Array) => Promise<void>;
+  /** Stop the answer. */
+  hush: () => void;
+  /** Back to the episode, playing again if it was. */
+  release: (resume: boolean) => void;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -116,6 +131,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const episodeRef = useRef<Episode | null>(null);
   episodeRef.current = player.episode;
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const asideRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
   // Listening as it really happened: seconds actually played (not the furthest point a seek reached),
   // jumps back, and seconds skipped forward. Reset per episode; folded into its feedback on pause.
@@ -323,6 +339,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setPlayer((p) => (p.episode?.id === e.id ? { ...p, episode: e, duration: e.durationSec, live: p.live ? { ...p.live, written: p.live.chapters, voiced: p.live.chapters, done: true } : null } : p));
   }, []);
 
+  const aside = useMemo<Aside>(() => {
+    const blank = () => URL.createObjectURL(new Blob([silentMp3(0.1) as BlobPart], { type: "audio/mpeg" }));
+    let stopClip: (() => void) | null = null;
+    return {
+      prime: () => {
+        const b = asideRef.current;
+        if (!b) return;
+        const url = blank();
+        b.src = url;
+        b.play()
+          .catch(() => undefined)
+          .finally(() => URL.revokeObjectURL(url));
+      },
+      hold: async (lineEnd) => {
+        const a = audioRef.current;
+        if (!a || a.paused) return false;
+        const until = Date.now() + 1500;
+        while (!a.paused && a.currentTime < lineEnd - 0.05 && Date.now() < until) await new Promise((r) => setTimeout(r, 60));
+        a.pause();
+        return true;
+      },
+      play: (bytes) =>
+        new Promise<void>((resolve) => {
+          const b = asideRef.current;
+          if (!b) return resolve();
+          const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "audio/mpeg" }));
+          const end = () => {
+            b.removeEventListener("ended", end);
+            b.removeEventListener("error", end);
+            URL.revokeObjectURL(url);
+            stopClip = null;
+            resolve();
+          };
+          stopClip = end;
+          b.addEventListener("ended", end);
+          b.addEventListener("error", end);
+          b.src = url;
+          b.playbackRate = audioRef.current?.playbackRate ?? 1;
+          b.play().catch(end);
+        }),
+      hush: () => {
+        asideRef.current?.pause();
+        stopClip?.();
+      },
+      release: (resume) => {
+        if (resume) audioRef.current?.play().catch(() => undefined);
+      },
+    };
+  }, []);
+
   const toggle = useCallback(() => {
     const a = audioRef.current;
     if (!a || !player.episode) return;
@@ -394,11 +460,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lang = settings.uiLang;
   const T = useCallback((zh: string, en: string) => (lang === "zh" ? zh : en), [lang]);
 
-  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd };
+  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, aside };
 
   return (
     <AppCtx.Provider value={value}>
       {children}
+      <audio ref={asideRef} preload="none" />
       <audio
         ref={audioRef}
         preload="metadata"
