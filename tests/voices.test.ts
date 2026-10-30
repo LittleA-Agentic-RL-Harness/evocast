@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { accountDefaults, freeUsable, isFreeTier, missingSeats, previewIn, rankAccount, rankLibrary, SHELF } from "../lib/tts/voices";
-import { ElevenError, inspectAccount, listMyVoices, recommendVoices, type SharedVoice, type VoiceInfo } from "../lib/tts/elevenlabs";
+import { canSpeak, ElevenError, inspectAccount, listMyVoices, recommendVoices, type SharedVoice, type VoiceInfo } from "../lib/tts/elevenlabs";
 import { gatewaySpeechTimed } from "../lib/tts/gateway";
 import { resolveVoices, STYLES } from "../lib/harness/styles";
-import { freePlan, libraryOnly, seatVoices, voiceLine } from "../lib/client/pipeline";
+import { effectiveTtsModel, freePlan, libraryOnly, seatVoices, voiceLine } from "../lib/client/pipeline";
+import { keyMessage } from "../lib/client/api";
+import { SEEDS } from "../lib/harness/genome";
+import { POST as verifyKey } from "../app/api/keys/route";
+import { POST as tts } from "../app/api/tts/route";
 import { DEFAULT_SETTINGS, type Settings } from "../lib/client/store";
 
 const lib = (id: string, extra: Partial<SharedVoice> = {}): SharedVoice => ({ voice_id: id, public_owner_id: "o", name: id, rate: 1, notice_period: 730, live_moderation_enabled: false, ...extra });
@@ -228,4 +232,71 @@ test("a free plan runs on its account voices and stops early without them; the t
   const trial: Settings = { ...free, keys: { ...free.keys, llmProvider: "hosted" } };
   assert.equal(freePlan(trial), false);
   assert.equal(seatVoices(trial, "studio", "zh").A.voiceId, STYLES.studio.voices.zh.A.voiceId);
+});
+
+test("a key without Text to Speech is refused at sign-up and before a run, at no cost", async () => {
+  const real = globalThis.fetch;
+  const seen: { url: string; body?: string }[] = [];
+  const missing = (perm: string) =>
+    new Response(JSON.stringify({ detail: { type: "authentication_error", code: "unauthorized", status: "missing_permissions", message: `The API key you used is missing the permission ${perm} to execute this operation.` } }), { status: 401 });
+  try {
+    // The key the owner tried: models_read, user_read and text_to_speech all missing (seen live 2026-10-30).
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname;
+      seen.push({ url: path, body: init?.body as string | undefined });
+      return missing(path.startsWith("/v1/text-to-speech/") ? "text_to_speech" : path === "/v1/models" ? "models_read" : "user_read");
+    }) as typeof fetch;
+    assert.equal(await canSpeak("sk_limited"), false);
+    const a = await inspectAccount("sk_limited");
+    assert.deepEqual([...a.missing].sort(), ["models_read", "text_to_speech", "user_read"]);
+    // The probe never asks for speech: its text is empty.
+    assert.ok(seen.filter((s) => s.url.startsWith("/v1/text-to-speech/")).every((s) => JSON.parse(s.body!).text === ""));
+
+    const res = await verifyKey(new Request("https://evocast.test/api/keys", { method: "POST", body: JSON.stringify({ kind: "elevenlabs", key: "sk_limited" }) }));
+    const body = (await res.json()) as { ok: boolean; error?: string; errorZh?: string };
+    assert.equal(body.ok, false);
+    assert.match(body.error!, /Text to Speech/);
+    assert.match(body.errorZh!, /Text to Speech/);
+
+    const probe = await tts(new Request("https://evocast.test/api/tts", { method: "POST", headers: { "x-el-key": "sk_limited", "x-llm-provider": "anthropic" }, body: JSON.stringify({ probe: true }) }));
+    assert.equal(probe.status, 401);
+    const p = (await probe.json()) as { error: string; code: string };
+    assert.equal(p.code, "missing_permissions");
+    assert.equal(keyMessage(p.error, (_zh, en) => en), "Your ElevenLabs key doesn't have the Text to Speech permission. Turn it on at elevenlabs.io/app/settings/api-keys, or use a key without restrictions.");
+
+    // A key that may speak passes the probe: the empty text fails validation, nothing is billed.
+    globalThis.fetch = (async () => new Response(JSON.stringify({ detail: { type: "validation_error", message: "Text is empty" } }), { status: 400 })) as typeof fetch;
+    assert.equal(await canSpeak("sk_ok"), true);
+    const ok = await tts(new Request("https://evocast.test/api/tts", { method: "POST", headers: { "x-el-key": "sk_ok", "x-llm-provider": "anthropic" }, body: JSON.stringify({ probe: true }) }));
+    assert.equal(ok.status, 200);
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
+test("every mode speaks with the Eleven v4 family the app promises", () => {
+  const own: Settings = { ...DEFAULT_SETTINGS, keys: { llmProvider: "anthropic", elevenlabsKey: "sk_x", elevenlabsModel: "eleven_v4" } };
+  // Lite is per line: v4 Turbo, the same price as the Flash model its seed names.
+  assert.equal(SEEDS.lite.pipeline.ttsModel, "eleven_flash_v2_5");
+  assert.equal(effectiveTtsModel(SEEDS.lite, "lite", own), "eleven_v4_turbo");
+  assert.equal(effectiveTtsModel(SEEDS.medium, "medium", own), "eleven_v4");
+  assert.equal(effectiveTtsModel(SEEDS.heavy, "heavy", own), "eleven_v4");
+  // A newer generation is adopted for dialogue and per line alike.
+  const v5: Settings = { ...own, keys: { ...own.keys, elevenlabsModel: "eleven_v5" } };
+  assert.equal(effectiveTtsModel(SEEDS.medium, "medium", v5), "eleven_v5");
+  assert.equal(effectiveTtsModel(SEEDS.lite, "lite", v5), "eleven_v5_turbo");
+  // The trial only uses models the AI Gateway serves.
+  const trial: Settings = { ...v5, keys: { ...v5.keys, llmProvider: "hosted" } };
+  assert.equal(effectiveTtsModel(SEEDS.medium, "medium", trial), "eleven_v4");
+  assert.equal(effectiveTtsModel(SEEDS.lite, "lite", trial), "eleven_v4_turbo");
+  // An explicit choice still wins.
+  assert.equal(effectiveTtsModel(SEEDS.lite, "lite", { ...own, ttsOverride: { lite: "eleven_flash_v2_5" } }), "eleven_flash_v2_5");
+});
+
+test("on the trial a stand-in voice is for that run only, and the line says so", () => {
+  const T = (_zh: string, en: string) => en;
+  assert.equal(
+    voiceLine([{ kind: "replaced", style: "studio", lang: "zh", speaker: "A", from: "Studio 中 A", to: "James Gao – Calm, Friendly and Warm", saved: false }], T),
+    "Studio 中 A isn't available on the free trial; James Gao spoke as Host this time.",
+  );
 });

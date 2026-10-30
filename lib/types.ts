@@ -121,8 +121,8 @@ export interface Episode extends EpisodeRequest {
 export type VoiceChange =
   /** A free plan's first run: each seat's default is the closest voice in the account. */
   | { kind: "account"; names: [string, string] }
-  /** A voice the provider no longer has (or a free plan can't use): the seat's top pick took over, saved. */
-  | { kind: "replaced"; style: StyleId; lang: Lang; speaker: Speaker; from: string; to: string };
+  /** A voice the provider no longer has (or a free plan can't use): the seat's top pick took over, saved unless on the trial. */
+  | { kind: "replaced"; style: StyleId; lang: Lang; speaker: Speaker; from: string; to: string; saved?: boolean };
 
 /** Keys and provider choices sent per request (BYOK). Never persisted server-side. */
 export interface ClientKeys {

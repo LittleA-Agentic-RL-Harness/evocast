@@ -13,7 +13,7 @@ import { modelInfo } from "@/lib/tts/models";
 import { estimateEpochUsd, runEpoch } from "@/lib/client/evolution";
 import { canAutoTune, DEFAULT_TUNE_BUDGET, spentThisWeek } from "@/lib/harness/autotune";
 import { getActive, getEvolutionLog, getTuneSpend, listHarnesses, saveProfile, setActive, type ActiveSet, type EvolutionLogEntry, type HarnessRecord } from "@/lib/client/store";
-import { downloadBlob } from "@/lib/client/pipeline";
+import { downloadBlob, effectiveTtsModel } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
 
 // ------------------------------------------------------------------ jigsaw geometry
@@ -307,7 +307,7 @@ function Engine() {
               <div className="eyebrow" style={{ color: `var(--${m})` }}>{m}</div>
               <div className="ellipsis" style={{ fontWeight: 600, marginTop: 3 }}>{h.label}</div>
               <div className="caption" style={{ marginTop: 3 }}>
-                {h.pipeline.revise ? T("校验 + 修订", "verify + revise") : h.pipeline.grade ? T("校验", "verify") : T("不校验", "no verify")} · {modelInfo(settings.ttsOverride[m] ?? h.pipeline.ttsModel)?.label.split(" ·")[0]}
+                {h.pipeline.revise ? T("校验 + 修订", "verify + revise") : h.pipeline.grade ? T("校验", "verify") : T("不校验", "no verify")} · {modelInfo(effectiveTtsModel(h, m, settings))?.label.split(" ·")[0]}
               </div>
               {metric && (
                 <div className="row" style={{ marginTop: 8 }}>

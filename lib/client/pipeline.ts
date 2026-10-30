@@ -59,7 +59,9 @@ export function voiceLine(changes: VoiceChange[], T: T): string {
     .map((c) =>
       c.kind === "account"
         ? T(`免费套餐：主播用你账户里的 ${first(c.names[0])} × ${first(c.names[1])}。`, `Free plan: the hosts use ${first(c.names[0])} × ${first(c.names[1])} from your account.`)
-        : T(`${first(c.from)} 已不可用，${seatRole(c.style, c.speaker, T)}换成了 ${first(c.to)}，已保存。`, `${first(c.from)} is no longer available; ${first(c.to)} takes over as ${seatRole(c.style, c.speaker, T)} (saved).`),
+        : c.saved === false
+          ? T(`${first(c.from)} 在免费试用下用不了，这次由 ${first(c.to)} 担任${seatRole(c.style, c.speaker, T)}。`, `${first(c.from)} isn't available on the free trial; ${first(c.to)} spoke as ${seatRole(c.style, c.speaker, T)} this time.`)
+          : T(`${first(c.from)} 已不可用，${seatRole(c.style, c.speaker, T)}换成了 ${first(c.to)}，已保存。`, `${first(c.from)} is no longer available; ${first(c.to)} takes over as ${seatRole(c.style, c.speaker, T)} (saved).`),
     )
     .join(" ");
 }
@@ -80,12 +82,20 @@ interface ScriptResponse {
   latencyMs: number;
 }
 
-/** Per-mode override → else the newest dialogue model the ElevenLabs key exposes (for dialogue harnesses) → else the harness's model. */
+/**
+ * Per-mode override → else the newest dialogue model the ElevenLabs key exposes (for dialogue
+ * harnesses) or that family's Turbo model (for per-line harnesses: the same price as Flash, newer
+ * voices) → else the harness's model. The trial only offers models the AI Gateway serves.
+ */
 export function effectiveTtsModel(h: Harness, mode: EpisodeRequest["mode"], s: Settings): string {
   const o = s.ttsOverride[mode];
   if (o) return o;
-  if (modelInfo(h.pipeline.ttsModel)?.dialogue && s.keys.elevenlabsModel && modelInfo(s.keys.elevenlabsModel)?.dialogue) return s.keys.elevenlabsModel;
-  return h.pipeline.ttsModel;
+  const trial = s.keys.llmProvider === "hosted";
+  const usable = (id: string) => Boolean(modelInfo(id) && (!trial || modelInfo(id)!.gateway));
+  const newest = s.keys.elevenlabsModel && modelInfo(s.keys.elevenlabsModel)?.dialogue && usable(s.keys.elevenlabsModel) ? s.keys.elevenlabsModel : "eleven_v4";
+  if (modelInfo(h.pipeline.ttsModel)?.dialogue) return s.keys.elevenlabsModel && newest === s.keys.elevenlabsModel ? newest : h.pipeline.ttsModel;
+  const turbo = `${newest}_turbo`;
+  return usable(turbo) && !modelInfo(turbo)!.dialogue ? turbo : h.pipeline.ttsModel;
 }
 
 /** Full pipeline in the browser: brief once, then script + audio for each language. */
@@ -120,6 +130,8 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
     }
     if (input.langs.some((l) => libraryOnly(request.style, l, current))) throw new ApiError("Free ElevenLabs plans can't use library voices through the API.", "free_needs_voices");
   }
+  // A key that can't make speech fails here, before the model is paid to read and write.
+  if (settings.keys.llmProvider !== "hosted" && settings.keys.elevenlabsKey) await postJSON("/api/tts", { probe: true }, headers, signal);
   await saveSource(sourceId, input.source);
 
   onProgress({ stage: "brief", message: `Reading ${input.source.name} (${Math.round(input.source.text.length / 1000)}k chars)…`, pct: 5 });
@@ -154,10 +166,11 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
         const next = trial ? bestOf(SHELF, seat, ttsModel, avoid) : free ? bestOf(own, seat, ttsModel, avoid) : await topPick(seat, ttsModel, avoid, headers).catch(() => null);
         if (!next) continue;
         const from = seatVoices(current, request.style, lang)[speaker].name;
-        const o = structuredClone(current.voiceOverrides);
-        ((o[request.style] ??= {})[lang] ??= {})[speaker] = next;
         voiceIds[speaker] = next.voiceId;
-        saveVoices({ voiceOverrides: o }, { kind: "replaced", ...seat, from, to: next.name });
+        // The trial speaks from another account, where the person's own voices don't exist: stand in for this run only.
+        const o = structuredClone(current.voiceOverrides);
+        if (!trial) ((o[request.style] ??= {})[lang] ??= {})[speaker] = next;
+        saveVoices(trial ? {} : { voiceOverrides: o }, { kind: "replaced", ...seat, from, to: next.name, saved: !trial });
         healed = true;
       }
       return healed;
@@ -179,7 +192,7 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
       // One retry per chunk: a transient provider error shouldn't throw away the script already paid for.
       // A voice that's gone is replaced first, so the retry speaks with its successor.
       const r = await voice().catch(async (e) => {
-        if (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || e.code === "rate_limited"))) throw e;
+        if (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || FINAL.has(e.code ?? "")))) throw e;
         if (e instanceof ApiError && (e.code === "voice_not_found" || e.code === "paid_plan_required") && !(await heal(e))) throw e;
         return voice();
       });
@@ -232,6 +245,9 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
   onProgress({ stage: "save", message: "Done", pct: 100 });
   return episodes;
 }
+
+/** Answers a retry can't change: limits, permissions, the key itself. */
+const FINAL = new Set(["rate_limited", "missing_permissions", "insufficient_permissions", "invalid_api_key", "quota_exceeded"]);
 
 /** The changes that shaped one language's episode. */
 const mine = (changes: VoiceChange[], lang: Lang) => changes.filter((c) => c.kind === "account" || c.lang === lang);
