@@ -4,26 +4,45 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
 import { Mark } from "./Shell";
-import { Button, MenuItem, Popover, Segmented, spring, springSoft } from "../ui/kit";
+import { Button, MenuItem, Popover, spring, springSoft } from "../ui/kit";
 import { Check, ChevronDown, Key } from "../ui/icons";
-import { AMBIGUOUS, providerById } from "@/lib/llm/providers";
 import { getProfile, saveProfile, type Settings } from "@/lib/client/store";
 import { modelInfo } from "@/lib/tts/models";
 import { track } from "@/lib/client/track";
 import { getTrial, type Trial } from "@/lib/client/api";
 
+interface LLMModel {
+  id: string;
+  released?: string;
+  input?: number;
+  output?: number;
+  verified?: boolean;
+  tier?: "pick" | "cheap" | "top";
+}
 interface LLMResult {
   ok: boolean;
   needsProvider?: boolean;
+  /** Providers whose keys look like this one, when the shape alone can't tell. */
+  candidates?: { id: string; name: string }[];
   error?: string;
-  provider?: { id: string; name: string; kind: "anthropic" | "openai"; baseUrl?: string };
-  models?: { id: string; name: string }[];
+  provider?: { id: string; name: string; kind: "anthropic" | "openai"; baseUrl?: string; keysUrl?: string };
+  models?: LLMModel[];
   recommended?: string | null;
+}
+
+const usd = (n: number) => `$${n < 1 ? Number(n.toPrecision(2)) : Number(n.toFixed(2))}`;
+
+/** "Recommended · $2 / $10 · 2026-09" (input / output per million tokens) */
+function modelLine(m: LLMModel, T: (zh: string, en: string) => string): string | undefined {
+  const tier = m.tier === "pick" ? T("推荐", "Recommended") : m.tier === "cheap" ? T("最省", "Cheapest") : m.tier === "top" ? T("最强", "Most capable") : null;
+  const price = m.input != null && m.output != null ? `${usd(m.input)} / ${usd(m.output)}` : null;
+  const unchecked = m.verified === false && (price || m.released) ? T("仅一处来源", "one source") : null;
+  return [tier, price, m.released?.slice(0, 7), unchecked].filter(Boolean).join(" · ") || undefined;
 }
 interface ElevenResult {
   ok: boolean;
   error?: string;
-  account?: { tier: string; characterCount: number; characterLimit: number; canClone: boolean; libraryViaApi: boolean; firstName: string | null; recommendedModel: string | null };
+  account?: { tier: string | null; characterCount: number | null; characterLimit: number | null; canClone: boolean; libraryViaApi: boolean; firstName: string | null; recommendedModel: string | null; missing?: string[] };
 }
 
 async function verify<T>(body: unknown): Promise<T> {
@@ -164,6 +183,8 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
   const { T } = useApp();
   const [key, setKey] = useState(draft.keys.llmProvider === "mock" || draft.keys.llmProvider === "hosted" ? "" : (draft.keys.llmKey ?? ""));
   const [providerId, setProviderId] = useState<string | undefined>();
+  // Kept after a pick, so a wrong guess can be corrected without retyping the key.
+  const [choices, setChoices] = useState<{ key: string; list: { id: string; name: string }[] } | null>(null);
   const [res, setRes] = useState<LLMResult | null>(null);
   const [checking, setChecking] = useState(false);
   const [model, setModel] = useState<string | null>(null);
@@ -176,12 +197,15 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
       return;
     }
     const n = ++seq.current;
+    const pick = choices?.key === debounced ? providerId : undefined;
     setChecking(true);
-    verify<LLMResult>({ kind: "llm", key: debounced, providerId })
+    verify<LLMResult>({ kind: "llm", key: debounced, providerId: pick })
       .then((r) => {
         if (n !== seq.current) return;
         setRes(r);
         setModel(r.recommended ?? null);
+        if (r.needsProvider) setChoices({ key: debounced, list: r.candidates ?? [] });
+        else if (!pick) setChoices(null);
       })
       .catch((e) => n === seq.current && setRes({ ok: false, error: (e as Error).message }))
       .finally(() => n === seq.current && setChecking(false));
@@ -190,8 +214,11 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
   const ok = Boolean(res?.ok && res.provider);
   const next = () => {
     if (!res?.provider) return;
+    const chosen = res.models?.find((m) => m.id === model);
     setDraft({
       ...draft,
+      // Real list prices keep cost estimates honest for any provider.
+      llmPrice: chosen?.input != null && chosen.output != null ? { input: chosen.input, output: chosen.output } : undefined,
       keys: {
         ...draft.keys,
         llmProvider: res.provider.kind,
@@ -211,16 +238,30 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
         <h1 className="title">{T("大模型", "Your model")}</h1>
         <p className="lede">{T("负责读懂原文、写稿和自我进化。粘贴即可，我会自动识别服务商并选用最新模型。", "It reads, writes and evolves. Paste a key — I'll detect the provider and pick the newest model.")}</p>
       </div>
-      <KeyField value={key} onChange={setKey} placeholder="sk-ant-…  ·  sk-…  ·  AIza…" status={checking ? "checking" : ok ? "ok" : "idle"} />
+      <KeyField
+        value={key}
+        onChange={(v) => {
+          setKey(v);
+          setProviderId(undefined);
+        }}
+        placeholder="sk-ant-…  ·  sk-…  ·  AIza…"
+        status={checking ? "checking" : ok ? "ok" : "idle"}
+      />
       <AnimatePresence mode="wait">
-        {res?.needsProvider && (
+        {choices?.key === debounced && !ok && (
           <motion.div key="p" {...{ initial: { opacity: 0, y: 6 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0 } }} className="stack" style={{ justifyItems: "center" }}>
             <span className="hint">{T("这个 Key 来自哪家？", "Which provider is this key from?")}</span>
-            <Segmented value={providerId ?? ""} onChange={(v) => setProviderId(v)} options={AMBIGUOUS.map((id) => ({ value: id, label: providerById(id)!.name }))} />
+            <div className="row" style={{ flexWrap: "wrap", justifyContent: "center", gap: 6 }}>
+              {choices.list.map((c) => (
+                <button key={c.id} className="chip" aria-pressed={c.id === providerId} onClick={() => setProviderId(c.id)}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
           </motion.div>
         )}
         {ok && res?.provider && (
-          <motion.div key="ok" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={springSoft} className="card flat" style={{ padding: 13 }}>
+          <motion.div key="ok" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={springSoft} className="card flat" style={{ padding: 13, position: "relative", zIndex: 2 }}>
             <div className="spread">
               <div className="key-status">
                 <span className="badge good">{res.provider.name}</span>
@@ -228,31 +269,35 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
               </div>
               <Popover
                 align="end"
+                width={300}
                 trigger={(_, toggle) => (
                   <button className="btn small" onClick={toggle}>
                     {model ?? "—"} <ChevronDown size={12} />
                   </button>
                 )}
               >
-                {(close) =>
-                  (res.models ?? []).slice(0, 10).map((m) => (
+                {(close) => [
+                  <span key="unit" className="menu-sub" style={{ padding: "4px 10px 6px" }}>
+                    {T("价格：每百万 token 输入 / 输出（美元），多个公开目录交叉核对", "Prices: $ per million input / output tokens, cross-checked across public catalogs")}
+                  </span>,
+                  ...(res.models ?? []).slice(0, 12).map((m) => (
                     <MenuItem
                       key={m.id}
                       title={m.id}
-                      subtitle={m.id === res.recommended ? T("推荐 · 最新", "Recommended · newest") : undefined}
+                      subtitle={modelLine(m, T)}
                       checked={m.id === model}
                       onSelect={() => {
                         setModel(m.id);
                         close();
                       }}
                     />
-                  ))
-                }
+                  )),
+                ]}
               </Popover>
             </div>
           </motion.div>
         )}
-        {res && !res.ok && !res.needsProvider && res.error && (
+        {res && !res.ok && !res.needsProvider && res.error && !checking && (
           <motion.div key="e" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="error">
             {T("这把钥匙用不了：", "This key didn't work: ")}
             {res.error}
@@ -264,7 +309,7 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
           {T("返回", "Back")}
         </Button>
         <div className="row">
-          <a className="btn plain" href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
+          <a className="btn plain" href={res?.provider?.keysUrl ?? "https://console.anthropic.com/settings/keys"} target="_blank" rel="noreferrer">
             {T("获取 Key", "Get a key")}
           </a>
           <Button variant="primary" disabled={!ok} onClick={next}>
@@ -273,6 +318,18 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
         </div>
       </div>
     </div>
+  );
+}
+
+/** A key limited to some permissions still works; say what it can't read and what that changes. */
+function missingNote(missing: string[], T: (zh: string, en: string) => string): string {
+  const parts = [
+    missing.includes("models_read") && T("读不到模型列表，默认用 Eleven v4", "can't list models, so Eleven v4 is used"),
+    missing.includes("user_read") && T("读不到套餐和余量", "can't read your plan or quota"),
+  ].filter(Boolean);
+  return T(
+    `这把钥匙限定了权限（缺 ${missing.join("、")}）：${parts.join("；")}。生成节目只需要 Text to Speech；换声音还要 Voices 相关权限，片头音乐要 Music Generation。`,
+    `This key is limited (no ${missing.join(", ")}): it ${parts.join("; ")}. Making episodes needs only Text to Speech; changing voices also needs the Voices permissions, and the intro sting needs Music Generation.`,
   );
 }
 
@@ -298,9 +355,9 @@ function ElevenStep({ draft, setDraft, onName, onNext, onBack }: { draft: Settin
   }, [debounced]);
 
   const a = res?.account;
-  const left = a ? Math.max(0, a.characterLimit - a.characterCount) : 0;
+  const left = a?.characterLimit != null ? Math.max(0, a.characterLimit - (a.characterCount ?? 0)) : null;
   const next = (skip = false) => {
-    setDraft({ ...draft, keys: { ...draft.keys, elevenlabsKey: skip ? undefined : key, elevenlabsModel: a?.recommendedModel ?? undefined, elevenlabsTier: a?.tier } });
+    setDraft({ ...draft, keys: { ...draft.keys, elevenlabsKey: skip ? undefined : key, elevenlabsModel: a?.recommendedModel ?? undefined, elevenlabsTier: a?.tier ?? undefined } });
     onName(a?.firstName ?? null);
     onNext();
   };
@@ -317,12 +374,15 @@ function ElevenStep({ draft, setDraft, onName, onNext, onBack }: { draft: Settin
         {a && (
           <motion.div key="ok" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={springSoft} className="card flat stack" style={{ padding: 13 }}>
             <div className="row">
-              <span className="badge good">{a.tier}</span>
+              <span className="badge good">{a.tier ?? T("钥匙可用", "Key works")}</span>
               {a.recommendedModel && <span className="badge accent">{modelInfo(a.recommendedModel)?.label.split(" ·")[0] ?? a.recommendedModel} · {T("最新", "newest")}</span>}
-              <span className="caption tabular">
-                {T("剩余", "Left")} {left.toLocaleString()} / {a.characterLimit.toLocaleString()}
-              </span>
+              {left != null && (
+                <span className="caption tabular">
+                  {T("剩余", "Left")} {left.toLocaleString()} / {a.characterLimit!.toLocaleString()}
+                </span>
+              )}
             </div>
+            {Boolean(a.missing?.length) && <span className="hint">{missingNote(a.missing!, T)}</span>}
             {!a.libraryViaApi && <span className="hint">{T("免费套餐不能通过 API 使用声音库声音，生成时会改用你账户里的声音；也没有商用授权。", "Free tier can't use Voice Library voices via API (we'll use your account voices) and has no commercial license.")}</span>}
           </motion.div>
         )}

@@ -1,5 +1,5 @@
 import type { Lang } from "../types";
-import { modelInfo, newestDialogueModel } from "./models";
+import { modelInfo, newestDialogueModel, TTS_MODELS } from "./models";
 import { mp3Duration, stripMp3Headers } from "./mp3";
 import { stripTags, sanitizeTags } from "./tags";
 
@@ -164,35 +164,57 @@ export async function subscription(key: string): Promise<{ tier: string; charact
 // ------------------------------------------------------------------ onboarding
 
 export interface ElevenAccount {
-  tier: string;
-  characterCount: number;
-  characterLimit: number;
+  /** null when the key may not read the account (no user_read). */
+  tier: string | null;
+  characterCount: number | null;
+  characterLimit: number | null;
   canClone: boolean;
   libraryViaApi: boolean;
   firstName: string | null;
   ttsModels: string[];
   recommendedModel: string | null;
+  /** Permissions this key lacks among the ones onboarding reads (e.g. models_read). */
+  missing: string[];
 }
 
-/** Verify a key and read what it can do: plan, quota, models (to auto-pick the newest). */
+/** A restricted key: 401 `missing_permissions` in practice, 403 `insufficient_permissions` per the docs. Invalid keys say `invalid_api_key`. */
+export const isMissingPermission = (e: ElevenError) =>
+  e.code === "missing_permissions" || e.code === "insufficient_permissions" || /missing the permission/i.test(e.message);
+
+interface ElevenUser {
+  first_name?: string | null;
+  subscription?: { tier?: string; character_count?: number; character_limit?: number; can_use_instant_voice_cloning?: boolean };
+}
+
+/**
+ * Verify a key and read what it can do: plan, quota, models (to auto-pick the newest).
+ * Keys can be limited to chosen permissions. A "missing permission" answer still proves the
+ * key is real, so only an invalid key fails; what a limited key can't read falls back.
+ */
 export async function inspectAccount(key: string): Promise<ElevenAccount> {
-  const [userRes, modelsRes] = await Promise.all([el(key, "/v1/user"), el(key, "/v1/models")]);
-  const user = (await userRes.json()) as {
-    first_name?: string | null;
-    subscription?: { tier?: string; character_count?: number; character_limit?: number; can_use_instant_voice_cloning?: boolean };
+  const missing: string[] = [];
+  const read = async <T>(path: string): Promise<T | null> => {
+    try {
+      return (await (await el(key, path)).json()) as T;
+    } catch (e) {
+      if (!(e instanceof ElevenError && isMissingPermission(e))) throw e;
+      missing.push(e.message.match(/permission (\w+)/)?.[1] ?? path);
+      return null;
+    }
   };
-  const models = (await modelsRes.json()) as { model_id: string; can_do_text_to_speech?: boolean }[];
-  const tts = models.filter((m) => m.can_do_text_to_speech !== false).map((m) => m.model_id);
-  const tier = user.subscription?.tier ?? "unknown";
+  const [user, models] = await Promise.all([read<ElevenUser>("/v1/user"), read<{ model_id: string; can_do_text_to_speech?: boolean }[]>("/v1/models")]);
+  const tts = models ? models.filter((m) => m.can_do_text_to_speech !== false).map((m) => m.model_id) : [...TTS_MODELS];
+  const tier = user?.subscription?.tier ?? null;
   return {
     tier,
-    characterCount: user.subscription?.character_count ?? 0,
-    characterLimit: user.subscription?.character_limit ?? 0,
-    canClone: user.subscription?.can_use_instant_voice_cloning ?? tier !== "free",
+    characterCount: user?.subscription?.character_count ?? null,
+    characterLimit: user?.subscription?.character_limit ?? null,
+    canClone: user?.subscription?.can_use_instant_voice_cloning ?? tier !== "free",
     libraryViaApi: tier !== "free",
-    firstName: user.first_name ?? null,
+    firstName: user?.first_name ?? null,
     ttsModels: tts,
     recommendedModel: newestDialogueModel(tts),
+    missing,
   };
 }
 

@@ -92,7 +92,7 @@
 
 | Key | 作用 | 说明 |
 |---|---|---|
-| **大模型** | 读懂原文、写稿、校验、进化 | 支持 Anthropic（默认 **Claude Opus 5.5**，实时列出你可用的最新模型），以及 DeepSeek、通义、Kimi、GLM、OpenRouter、Gemini 等 OpenAI 兼容接口 |
+| **大模型** | 读懂原文、写稿、校验、进化 | 支持 Anthropic（默认 **Claude Opus 5.5**），以及 OpenAI、Gemini、xAI、Mistral、DeepSeek、通义、Kimi、GLM、豆包、小米 MiMo、MiniMax、硅基流动、OpenRouter 等 20 多家 OpenAI 兼容服务。按钥匙格式识别服务商（绝不拿钥匙去别家试，格式相同的 `sk-…` 会让你选一次）；推荐这把钥匙能用的最新旗舰，发布日期和价格在 OpenRouter、Vercel AI Gateway、models.dev 三个公开目录之间交叉核对，并标出最省和最强 |
 | **ElevenLabs** | 声音 | 读取你的套餐和额度，自动使用最新的对话语音模型（目前是 **Eleven v4**）。通过 API 使用声音库声音需要付费套餐 |
 
 Key 只保存在你的设备上，服务端不存储、不记录。

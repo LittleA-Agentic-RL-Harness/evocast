@@ -237,7 +237,7 @@ textarea.field { resize: vertical; min-height: 89px; line-height: 1.5; }
 .reason { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--label-2); }
 
 /* ---------------------------------------------------------------- menus & sheets */
-.menu { position: absolute; z-index: 60; min-width: 220px; max-width: min(320px, calc(100vw - 32px)); padding: 5px; border-radius: var(--r2); background: var(--material-thick); backdrop-filter: saturate(180%) blur(30px); -webkit-backdrop-filter: saturate(180%) blur(30px); box-shadow: var(--shadow-3), 0 0 0 0.5px var(--separator-strong); }
+.menu { position: absolute; z-index: 60; min-width: 220px; max-width: min(320px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow-y: auto; padding: 5px; border-radius: var(--r2); background: var(--material-thick); backdrop-filter: saturate(180%) blur(30px); -webkit-backdrop-filter: saturate(180%) blur(30px); box-shadow: var(--shadow-3), 0 0 0 0.5px var(--separator-strong); }
 .menu-item { display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 8px; padding: 7px 10px; cursor: pointer; font-size: 14px; }
 .menu-item:hover { background: var(--accent); color: var(--accent-ink); }
 .menu-item:hover .menu-sub { color: color-mix(in srgb, var(--accent-ink) 78%, transparent); }

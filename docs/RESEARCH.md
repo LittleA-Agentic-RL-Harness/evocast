@@ -10,7 +10,7 @@
 
 | 维度 | 决策 | 依据 |
 |---|---|---|
-| 使用门槛 | **两把钥匙**：一个大模型 Key，一个 ElevenLabs Key。粘贴即实时校验；自动识别服务商，自动选用最新模型 | Anthropic 用 `models.list()`；OpenAI 兼容服务用 `/models`；ElevenLabs 用 `/v1/user` 和 `/v1/models`。只按前缀识别，**绝不拿 Key 去别家"试"** |
+| 使用门槛 | **两把钥匙**：一个大模型 Key，一个 ElevenLabs Key。粘贴即实时校验；自动识别服务商，自动选用最新模型 | Anthropic 用 `models.list()`；OpenAI 兼容服务用 `/models`（同一家公司的国内、国际、Token Plan 地址依次尝试）；ElevenLabs 用 `/v1/user` 和 `/v1/models`，限定权限的钥匙读不到的部分用默认值。只按钥匙格式识别，**绝不拿 Key 去别家"试"**。推荐哪个模型由 `lib/llm/rank.ts` 决定：发布日期和价格取 OpenRouter、Vercel AI Gateway、models.dev 的中位数 |
 | 语音 | 默认用 **Eleven v4 的 Text-to-Dialogue** 并开启 `with-timestamps`：一次请求合成两位主播，同时拿到每句的起始时间，文字稿可精确同步；相邻块之间传 `previous_text` / `future_text`，让语气连贯 | v4 于 2026-09-28 GA，支持 `zh`，$0.08/千字符；每次请求 ≤2,000 字符；对话接口默认仍是 v3，所以**必须显式传 `model_id`** |
 | 新模型 | ElevenLabs 出现 `eleven_v5` 时**无需改代码**即可自动采用；Anthropic 默认 `claude-opus-5-5`，界面列出该 Key 可用的最新模型供切换 | `newestDialogueModel()` 和 `modelInfo()` 会推断未来的版本号 |
 | ElevenLabs 深度用法 | 为每个主播位置做推荐（声音库 featured / trending + use_cases，按语言筛选）· 声音库搜索 · Voice Design（一句话描述 → 3 个候选 → 保存）· 即时克隆 · Eleven Music 片头 · 按套餐自适应 | 见第 3 节 |

@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { inspectAccount, ElevenError } from "@/lib/tts/elevenlabs";
-import { detectProvider, providerById, recommendModel } from "@/lib/llm/providers";
-import { DEFAULT_ANTHROPIC_MODEL } from "@/lib/llm";
+import { candidatesFor, providerById, PROVIDERS, type Provider } from "@/lib/llm/providers";
+import { catalog } from "@/lib/llm/catalog";
+import { rankModels } from "@/lib/llm/rank";
 import { assertPublicUrl } from "@/lib/server/keys";
 
 export const runtime = "nodejs";
@@ -27,27 +28,60 @@ export async function POST(req: Request) {
     }
   }
 
-  const provider = (body.providerId ? providerById(body.providerId) : null) ?? detectProvider(key);
-  if (!provider) return Response.json({ ok: false, needsProvider: true });
+  // The key's shape names its provider; a few `sk-…` shapes are shared, and then the visitor picks.
+  const shape = candidatesFor(key);
+  const provider = body.providerId ? providerById(body.providerId) : shape.length === 1 ? shape[0] : undefined;
+  if (!provider) return Response.json({ ok: false, needsProvider: true, candidates: (shape.length ? shape : PROVIDERS).map((p) => ({ id: p.id, name: p.name })) });
 
   try {
-    if (provider.kind === "anthropic") {
-      const client = new Anthropic({ apiKey: key, maxRetries: 1 });
-      const models: { id: string; name: string; created: number }[] = [];
-      for await (const m of client.models.list({ limit: 100 })) models.push({ id: m.id, name: m.display_name, created: Date.parse(m.created_at) / 1000 });
-      models.sort((a, b) => b.created - a.created);
-      const ids = models.map((m) => m.id);
-      const recommended = ids.includes(DEFAULT_ANTHROPIC_MODEL) ? DEFAULT_ANTHROPIC_MODEL : recommendModel(provider, models);
-      return Response.json({ ok: true, provider: { id: provider.id, name: provider.name, kind: provider.kind }, models: models.slice(0, 12), recommended });
-    }
-    const base = assertPublicUrl(provider.baseUrl!).toString().replace(/\/+$/, "");
-    const res = await fetch(`${base}/models`, { headers: { authorization: `Bearer ${key}` } });
-    if (!res.ok) return Response.json({ ok: false, error: `${provider.name} rejected the key (HTTP ${res.status}).` }, { status: res.status === 401 ? 401 : 502 });
-    const data = (await res.json()) as { data?: { id: string; created?: number }[] };
-    const models = (data.data ?? []).map((m) => ({ id: m.id.replace(/^models\//, ""), name: m.id.replace(/^models\//, ""), created: m.created ?? 0 }));
-    return Response.json({ ok: true, provider: { id: provider.id, name: provider.name, kind: provider.kind, baseUrl: provider.baseUrl }, models: models.slice(0, 40), recommended: recommendModel(provider, models) });
+    const { baseUrl, models: listed } = await listModels(provider, key);
+    const { models, recommended } = rankModels(listed, await catalog(), provider.own);
+    return Response.json({
+      ok: true,
+      provider: { id: provider.id, name: provider.name, kind: provider.kind, baseUrl, keysUrl: provider.keysUrl },
+      models: models.slice(0, 40),
+      recommended,
+    });
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) return Response.json({ ok: false, error: "Anthropic rejected the key." }, { status: 401 });
+    if (e instanceof KeyRejected) return Response.json({ ok: false, error: e.message }, { status: e.status === 401 || e.status === 403 ? 401 : 502 });
     return Response.json({ ok: false, error: (e as Error).message }, { status: 502 });
   }
+}
+
+class KeyRejected extends Error {
+  constructor(
+    message: string,
+    public status: number,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * The models this key can use. A provider's endpoints (regions, token plans) are tried in
+ * order until one accepts the key: they belong to the same company, so the key never
+ * reaches anyone else.
+ */
+async function listModels(p: Provider, key: string): Promise<{ baseUrl?: string; models: { id: string; created?: number }[] }> {
+  if (p.kind === "anthropic") {
+    const client = new Anthropic({ apiKey: key, maxRetries: 1 });
+    const models: { id: string; created: number }[] = [];
+    for await (const m of client.models.list({ limit: 100 })) models.push({ id: m.id, created: Date.parse(m.created_at) / 1000 });
+    return { models };
+  }
+  let last: KeyRejected | null = null;
+  for (const raw of p.baseUrls) {
+    const base = assertPublicUrl(raw).toString().replace(/\/+$/, "");
+    const get = (path: string) => fetch(`${base}${path}`, { headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) });
+    const check = p.verifyPath ? await get(p.verifyPath) : null;
+    const res = check && !check.ok ? check : await get("/models");
+    if (res.ok) {
+      const j = (await res.json()) as { data?: { id: string; created?: number }[]; models?: { id: string; created?: number }[] };
+      const models = (j.data ?? j.models ?? []).map((m) => ({ id: m.id.replace(/^models\//, ""), created: m.created }));
+      return { baseUrl: raw, models };
+    }
+    last = new KeyRejected(`${p.name} rejected the key (HTTP ${res.status}).`, res.status);
+  }
+  throw last ?? new KeyRejected(`${p.name} didn't answer.`, 502);
 }
