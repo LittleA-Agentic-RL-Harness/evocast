@@ -19,8 +19,9 @@ import {
 } from "../lib/harness/ui";
 import { buildPortrait, FILLED } from "../lib/harness/portrait";
 import { EMPTY_PROFILE } from "../lib/harness/profile";
-import { detectProvider, providerById, recommendModel } from "../lib/llm/providers";
+import { candidatesFor, providerById, UNSUPPORTED } from "../lib/llm/providers";
 import { modelInfo, newestDialogueModel } from "../lib/tts/models";
+import { inspectAccount } from "../lib/tts/elevenlabs";
 import { chunkScript } from "../lib/tts/chunk";
 import { heuristicRecipe } from "../lib/harness/prefill";
 
@@ -113,16 +114,37 @@ test("portrait fills gradually as evidence accumulates", () => {
   assert.equal(many.find((p) => p.key === "ritual")!.value.zh, "晚间复盘");
 });
 
-test("provider detection never guesses an ambiguous key", () => {
-  assert.equal(detectProvider("sk-ant-api03-xyz")?.id, "anthropic");
-  assert.equal(detectProvider("sk-or-v1-abc")?.id, "openrouter");
-  assert.equal(detectProvider("sk-proj-abc")?.id, "openai");
-  assert.equal(detectProvider("AIzaSyA-123")?.id, "gemini");
-  assert.equal(detectProvider("sk-0123456789abcdef0123456789abcdef"), null);
-  const ds = providerById("deepseek")!;
-  assert.equal(recommendModel(ds, [{ id: "deepseek-reasoner" }, { id: "deepseek-chat" }, { id: "text-embedding-x" }]), "deepseek-chat");
-  const oa = providerById("openai")!;
-  assert.equal(recommendModel(oa, [{ id: "gpt-4.1", created: 1 }, { id: "gpt-5.5", created: 9 }, { id: "gpt-5", created: 5 }, { id: "whisper-1", created: 10 }]), "gpt-5.5");
+test("provider detection: unique shapes name the provider; shared sk- shapes only narrow the choice", () => {
+  const one = (k: string) => {
+    const c = candidatesFor(k);
+    return c.length === 1 ? c[0].id : c.map((p) => p.id);
+  };
+  const r = (n: number, chars = "aB3") => chars.repeat(n).slice(0, n);
+  assert.equal(one(`sk-ant-api03-${r(93)}AA`), "anthropic");
+  assert.equal(one(`sk-or-v1-${"0f".repeat(32)}`), "openrouter");
+  assert.equal(one(`sk-proj-${r(74)}T3BlbkFJ${r(74)}`), "openai");
+  assert.equal(one(`sk-${r(20)}T3BlbkFJ${r(20)}`), "openai");
+  assert.equal(one(`AIzaSy${r(33)}`), "gemini");
+  assert.equal(one(`AQ.Ab8R${r(46)}`), "gemini");
+  assert.equal(one(`${"a1".repeat(16)}.${r(16)}`), "glm");
+  assert.equal(one("0b6f3c2e-1a2b-4c3d-8e9f-0123456789ab"), "doubao");
+  assert.equal(one(`vck_${r(56)}`), "vercel");
+  assert.equal(one(r(32)), "mistral");
+  assert.equal(one(`sk-api-${r(119)}`), "minimax");
+  assert.equal(one(`sk-cp-${r(60)}`), "minimax");
+  assert.equal(one(`tp-${r(40)}`), "mimo");
+  assert.equal(one(`sk-ws${r(40)}`), "qwen");
+  assert.equal(one(`sk-sp-${r(40)}`), "qwen-plan");
+  // DeepSeek and pre-upgrade DashScope keys share a shape: ask, specific candidates first.
+  const hex = candidatesFor(`sk-${"0123456789abcdef".repeat(2)}`).map((p) => p.id);
+  assert.deepEqual(hex.slice(0, 2), ["qwen", "deepseek"]);
+  assert.ok(hex.includes("mimo") && !hex.includes("minimax"));
+  const alnum = candidatesFor(`sk-${r(48)}`).map((p) => p.id);
+  assert.equal(alnum[0], "kimi");
+  assert.ok(candidatesFor(`sk-${"q".repeat(48)}`).some((p) => p.id === "siliconflow"));
+  assert.deepEqual(candidatesFor("no-such-shape"), []);
+  for (const k of ["sk-kimi-abc", "pplx-abc", "sk-ant-admin01-abc", "sk-admin-abc"]) assert.ok(UNSUPPORTED.some((u) => u.match.test(k)), k);
+  assert.ok(providerById("mimo") && providerById("minimax") && providerById("stepfun"));
 });
 
 test("newest ElevenLabs dialogue model is adopted automatically, including future versions", () => {
@@ -152,4 +174,33 @@ test("keyless prefill heuristic reads the document type", () => {
   assert.ok(paper.recipe.lenses.includes("rsi"));
   const report = heuristicRecipe("McKinsey report: supply chain and retail merchants in the market …", base);
   assert.equal(report.recipe.persona, "operator");
+});
+
+test("ElevenLabs: a key limited to some permissions still verifies; an invalid key doesn't", async () => {
+  const real = globalThis.fetch;
+  const deny = (status: number, detail: object) => new Response(JSON.stringify({ detail }), { status });
+  try {
+    globalThis.fetch = (async (url: string) =>
+      String(url).endsWith("/v1/models")
+        ? deny(401, { status: "missing_permissions", message: "The API key you used is missing the permission models_read to execute this operation." })
+        : new Response(JSON.stringify({ first_name: "Ada", subscription: { tier: "creator", character_count: 10, character_limit: 100 } }))) as typeof fetch;
+    const a = await inspectAccount("sk_limited");
+    assert.deepEqual(a.missing, ["models_read"]);
+    assert.equal(a.recommendedModel, "eleven_v4");
+    assert.equal(a.tier, "creator");
+
+    globalThis.fetch = (async (url: string) => {
+      const perm = String(url).endsWith("/v1/models") ? "models_read" : "user_read";
+      return deny(403, { type: "authorization_error", code: "insufficient_permissions", message: `The API key you used is missing the permission ${perm} to execute this operation.` });
+    }) as typeof fetch;
+    const b = await inspectAccount("sk_limited");
+    assert.deepEqual(b.missing.sort(), ["models_read", "user_read"]);
+    assert.equal(b.tier, null);
+    assert.equal(b.characterLimit, null);
+
+    globalThis.fetch = (async () => deny(401, { type: "authentication_error", code: "unauthorized", message: "Invalid API key", status: "invalid_api_key" })) as typeof fetch;
+    await assert.rejects(inspectAccount("sk_wrong"), /Invalid API key/);
+  } finally {
+    globalThis.fetch = real;
+  }
 });

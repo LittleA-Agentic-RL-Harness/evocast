@@ -135,7 +135,7 @@ npm run podcast -- --file report.pdf --harness my-evolved-harness.json
 
 | Key | What it does | Notes |
 |---|---|---|
-| **Model** | reads, writes, grades, evolves | Anthropic (default **Claude Opus 5.5**, newest models listed live) or any OpenAI‑compatible API — DeepSeek, Qwen, Kimi, GLM, OpenRouter, Gemini. Detected by key prefix; ambiguous `sk-…` keys ask once. |
+| **Model** | reads, writes, grades, evolves | Anthropic (default **Claude Opus 5.5**) or 20+ OpenAI‑compatible providers — OpenAI, Gemini, xAI, Mistral, DeepSeek, Qwen, Kimi, GLM, Doubao, Xiaomi MiMo, MiniMax, SiliconFlow, OpenRouter and more. The provider is told from the key's shape (keys are never tried on other providers; shared `sk-…` shapes ask once). The suggested model is the newest flagship the key can use, with release dates and prices cross‑checked across OpenRouter, Vercel AI Gateway and models.dev, and the cheapest and most capable labelled. |
 | **ElevenLabs** | voices | Reads your plan, quota and models; uses the newest dialogue model (**Eleven v4** today, future `eleven_vN` automatically). Library voices via API need a paid plan. |
 
 Keys stay on your device and are sent per request to stateless routes that forward them to the provider. See [SECURITY.md](SECURITY.md).

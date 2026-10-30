@@ -27,6 +27,12 @@ type T = (zh: string, en: string) => string;
 
 const rateLimited = (T: T) => T("请求太频繁了，等一分钟再试。", "Too many requests in a short time. Wait a minute and try again.");
 
+/** ElevenLabs keys can be limited to chosen permissions; say which one to turn on. */
+const missingPermission = (message: string, T: T) => {
+  const p = message.match(/missing the permission (\w+)/i)?.[1];
+  return p ? T(`ElevenLabs 钥匙缺少 ${p} 权限。在 elevenlabs.io/app/settings/api-keys 编辑这把钥匙打开它，或者换一把不限权限的钥匙。`, `Your ElevenLabs key is missing the ${p} permission. Turn it on at elevenlabs.io/app/settings/api-keys, or use an unrestricted key.`) : message;
+};
+
 /** Why a link couldn't be read, and what to do instead. */
 function linkMessage(err: LinkError, T: T): string {
   const host = (() => {
@@ -271,7 +277,7 @@ export default function Home() {
             ? T("今天的免费试用名额已满。在设置里填上自己的钥匙就能继续，或者明天再来。", "Today's free trial is fully used. Add your own keys in Settings to keep going, or come back tomorrow.")
             : code === "rate_limited"
               ? rateLimited(T)
-              : (e as Error).message;
+              : missingPermission((e as Error).message, T);
       setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     }
