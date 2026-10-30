@@ -79,9 +79,13 @@ Model cost is mostly reading the source, and trial sources are cut at 100k chara
 
 **Longer episodes** (8, 15, 30 minutes) are written and voiced chapter by chapter, and play from chapter 1. At list prices (estimated, not yet measured): reading the source once is about $0.25, then each 8 minutes adds about $0.15–0.20 of model cost; voice is about $0.01 a minute in Chinese and $0.033 in English. A 30-minute Chinese episode comes to about $1.10 and an English one to about $1.70, which is more than the default $1.50 a visitor gets per day, so the trial doesn't offer it (own keys do). Raise `TRIAL_VISITOR_USD` to offer it. Another length or language of the same source doesn't read it again (the brief is cached in the browser).
 
+**A model per step** (v0.5): reading stays on Claude Opus 5.5, chapters are written by Sonnet 5.5, and the cold open, checks, prefill, atlas and answers run on Haiku 5.5, with the brief, plan and source cached across calls. Measured on the trial on 2026‑10‑30 with three arXiv papers, 8 minutes in Chinese: model cost $0.21–0.33 (it was about $0.56), voice about $0.08 at Gateway prices, first sound after 4.1–4.3 s, 15–16 of 17 checks passed. Reading the source (Opus, about 55–65 s and about $0.15–0.20) is now most of the model cost and most of the wait, so a 15-minute episode costs little more than an 8-minute one.
+
+**Cold open and questions**: the cold open is one Haiku call on the first 8,000 characters (about $0.0005) voiced with Eleven v4 Turbo; a question is one Scribe transcription (about $0.002 a minute of speech), one Haiku call over the source, cached after the first question (about $0.0003–0.0006), and a few lines of v4 Turbo. Library voices can take 15–25 s on their first request through the Gateway; after that, a line takes 2–5 s.
+
 **The research atlas** on You costs one small model call each time the library changes (titles, one-liners and glossary terms of up to 120 sources; a few cents), and is the one `/api/evolve` action the trial may run.
 
-**Progress streams**: with `accept: application/x-ndjson`, `/api/brief` and `/api/script` stream `{"p": characters written}` while the model writes, then `{"ok": result}` or `{"error", "code", "status"}`. Request counts are unchanged, so the Firewall rules need no change.
+**Progress streams**: with `accept: application/x-ndjson`, `/api/brief`, `/api/script` and `/api/ask` stream `{"p": characters written}` while the model writes, `{"title"}` and `{"line"}` events as the cold open or an answer is written, then `{"ok": result}` or `{"error", "code", "status"}`. A live episode adds one cold-open call and one voice request per opening line; a question adds `/api/listen`, `/api/ask` and a few voice requests. Put `/api/ask` and `/api/listen` under the same per-IP rate rule as the other work routes.
 
 **Spend control**, in three layers:
 

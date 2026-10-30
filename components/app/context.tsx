@@ -83,6 +83,8 @@ interface Ctx {
   liveAudio: (bytes: Uint8Array, seconds: number, d: Draft) => void;
   liveDraft: (d: Draft) => void;
   liveEnd: (e?: Episode) => void;
+  /** Milliseconds the live episode stood still waiting for the next chapter (cold open coverage). */
+  liveWaited: () => number;
   /** Raise hand: the episode pauses for an answer, which plays on a channel of its own. */
   aside: Aside;
 }
@@ -127,6 +129,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // A live episode the person switched away from keeps generating, but no longer takes over the player.
   const leftLive = useRef<string | null>(null);
   const liveId = useRef<string | null>(null);
+  // Time spent at the edge of a live stream, waiting for voicing to catch up.
+  const waited = useRef({ total: 0, since: 0 });
   // Listening writes are queued; they're tagged with the episode playing when queued (stop() clears it right after).
   const episodeRef = useRef<Episode | null>(null);
   episodeRef.current = player.episode;
@@ -309,6 +313,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         reached.current = new Set();
         liveRef.current = new LiveAudio(a);
         liveId.current = d.episode.id;
+        waited.current = { total: 0, since: 0 };
         a.playbackRate = player.rate;
         track("play", { lang: d.episode.lang, persona: d.episode.persona, style: d.episode.style, seconds: d.estimatedSec, live: true });
         setPlayer((p) => ({ ...p, episode: d.episode, time: 0, duration: d.estimatedSec, sheet: true, live: liveState(d) }));
@@ -352,14 +357,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .catch(() => undefined)
           .finally(() => URL.revokeObjectURL(url));
       },
-      hold: async (lineEnd) => {
-        const a = audioRef.current;
-        if (!a || a.paused) return false;
-        const until = Date.now() + 1500;
-        while (!a.paused && a.currentTime < lineEnd - 0.05 && Date.now() < until) await new Promise((r) => setTimeout(r, 60));
-        a.pause();
-        return true;
-      },
+      // Playback events, not a polling loop: a background tab slows chained timers to a crawl.
+      hold: (lineEnd) =>
+        new Promise<boolean>((resolve) => {
+          const a = audioRef.current;
+          if (!a || a.paused) return resolve(false);
+          const done = () => {
+            a.removeEventListener("timeupdate", check);
+            clearTimeout(cap);
+            a.pause();
+            resolve(true);
+          };
+          const check = () => a.currentTime >= lineEnd - 0.05 && done();
+          const cap = setTimeout(done, 1500);
+          a.addEventListener("timeupdate", check);
+          check();
+        }),
       play: (bytes) =>
         new Promise<void>((resolve) => {
           const b = asideRef.current;
@@ -460,7 +473,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lang = settings.uiLang;
   const T = useCallback((zh: string, en: string) => (lang === "zh" ? zh : en), [lang]);
 
-  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, aside };
+  const liveWaited = useCallback(() => waited.current.total + (waited.current.since ? Date.now() - waited.current.since : 0), []);
+
+  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, liveWaited, aside };
 
   return (
     <AppCtx.Provider value={value}>
@@ -470,8 +485,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ref={audioRef}
         preload="metadata"
         onPlay={() => setPlayer((p) => ({ ...p, playing: true }))}
-        onWaiting={() => setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p))}
-        onPlaying={() => setPlayer((p) => (p.live?.waiting ? { ...p, live: { ...p.live, waiting: false } } : p))}
+        onWaiting={() => {
+          if (liveRef.current && !waited.current.since) waited.current.since = Date.now();
+          setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p));
+        }}
+        onPlaying={() => {
+          if (waited.current.since) waited.current = { total: waited.current.total + Date.now() - waited.current.since, since: 0 };
+          setPlayer((p) => (p.live?.waiting ? { ...p, live: { ...p.live, waiting: false } } : p));
+        }}
         onPause={() => {
           setPlayer((p) => ({ ...p, playing: false }));
           persistListening();

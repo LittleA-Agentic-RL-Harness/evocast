@@ -51,3 +51,14 @@ test("Settings names each stage's model", () => {
   assert.equal(modelName("claude-fable-5-1"), "Fable 5.1");
   assert.equal(modelName("deepseek-chat"), "deepseek-chat");
 });
+
+test("the cold open speaks with the fast sibling of the episode's voice model", async () => {
+  const { fastSibling } = await import("../lib/tts/models");
+  assert.equal(fastSibling("eleven_v4"), "eleven_v4_turbo");
+  assert.equal(fastSibling("eleven_v4", true), "eleven_v4_turbo");
+  assert.equal(fastSibling("eleven_v4_turbo"), "eleven_v4_turbo");
+  assert.equal(fastSibling("eleven_multilingual_v2"), "eleven_multilingual_v2");
+  // A newer generation the Gateway doesn't serve yet keeps its own model on the trial.
+  assert.equal(fastSibling("eleven_v5"), "eleven_v5_turbo");
+  assert.equal(fastSibling("eleven_v5", true), "eleven_v5");
+});

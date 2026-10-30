@@ -123,6 +123,7 @@ ${LANG_RULES[req.lang].map((r) => `- ${r}`).join("\n")}
 ## Length budget
 ${chaptered ? `- The whole episode ≈ ${target} characters (≈ ${req.minutes} min); each chapter has its own target, given with the request. Stay within ±15% of it.` : `- Total spoken text ≈ ${target} characters (≈ ${req.minutes} min). Stay within ±15%.`}
 - At most ${maxTurnChars(h, req.lang)} characters per turn; vary turn length.
+- Keep the two voices balanced: each speaker carries between a third and two thirds of the words. The host also frames, sums up and connects, not only asks.
 - At most ${reactions} very short reaction turns in the whole ${chaptered ? "episode" : "script"}.
 - The first ${h.script.hookLines} line(s) must deliver the hook.
 
@@ -229,7 +230,7 @@ Return: "lines" (this chapter only) and "visuals" (for this chapter).`,
 }
 
 /** Seconds of cold open: enough to cover reading the whole source, short enough to stay a teaser. */
-export const COLD_OPEN_SEC = 70;
+export const COLD_OPEN_SEC = 90;
 
 /**
  * The cold open, written from the source's first pages while the whole of it is still being read:
@@ -240,12 +241,12 @@ export function coldOpenUser(h: Harness, req: EpisodeRequest, head: string): str
 ${head}
 </opening_pages>
 
-Write only the episode's cold open: the first ~${COLD_OPEN_SEC} seconds the listener hears, about ${chars(h, req.lang, COLD_OPEN_SEC / 60)} spoken characters, 4–8 turns. The full document is still being read, so for this part the opening pages above are your only source.
-- Start on the most striking claim, question or number these pages contain, said plainly. Then what the source is (its title, shortened) and why it matters now. End on the question the rest of the episode will answer, without answering it.
-- Only what these pages say: no results, numbers or conclusions that aren't on them.
+Write only the episode's cold open: the first ~${COLD_OPEN_SEC} seconds the listener hears, about ${chars(h, req.lang, COLD_OPEN_SEC / 60)} spoken characters (use all of it), 6–10 turns. The full document is still being read, so for this part the opening pages above are your only source.
+- The first turn is one short spoken sentence (${dense(req.lang) ? "under 40 characters" : "under 15 words"}): the most striking concrete finding or number these pages contain, stated, not asked (a question only when they have none). Then what the source is (its title, shortened) and why it matters now. End on the question the rest of the episode will answer, without answering it.
+- Only what these pages say: no results, numbers or conclusions that aren't on them. No author names or institutions.
 - No greeting, no show intro, no "welcome": the hook comes first.
 
-Return "title" (a short, catchy episode title in the script language) and "lines".`;
+Return "title" (the episode's working title in the script language: a few words about the source's idea, never about this opening) and "lines".`;
 }
 
 export function scriptUser(brief: Brief, req: EpisodeRequest): string {
@@ -387,9 +388,9 @@ ${LANG_RULES[req.lang].map((r) => `- ${r}`).join("\n")}
 
 ## Rules
 - Answer from the source (and the brief) only. When it doesn't say, say so in one sentence, then give what it does say that comes closest. Never guess numbers.
-- 2–4 short turns, about ${dense(req.lang) ? "120–220 characters" : "60–120 words"} in all: A answers the question directly in the first sentence; B adds one concrete detail, number or caveat from the source, and where it is in the source when that helps ("in the results table", "section 3").
+- 2–4 short turns, about ${dense(req.lang) ? "120–220 characters" : "60–120 words"} in all. B, who knows the source best, speaks first, and B's first sentence is the answer itself, short (${dense(req.lang) ? "under 30 characters" : "under 15 words"}): no "good question", no restating or rephrasing the question. Then one concrete detail, number or caveat from the source, and where it is in the source when that helps ("in the results table", "section 3"). A may add one short follow-up.
+- Talk to the listener as "you", never about them in the third person, and never by a label.
 - Spoken style for the ear: no lists, no markdown, no URLs, no citations in brackets. No square-bracket tags.
-- At most one short acknowledgement of the question, then the answer.
 - The last turn ends with a brief handback to the episode, a few words.
 
 Return "lines" (array of {"speaker": "A" | "B", "text"}).`;

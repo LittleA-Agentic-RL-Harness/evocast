@@ -4,6 +4,7 @@ import type { Ask, Episode, ScriptLine } from "../types";
 import { ApiError, keyHeaders, postJSON, postStream } from "./api";
 import { getSource, type Settings } from "./store";
 import { stripMp3Headers } from "../tts/mp3";
+import { fastSibling } from "../tts/models";
 
 // Raise hand: the listener asks out loud (or types), the hosts answer in their own voices, and the
 // episode goes on. Questions are heard by ElevenLabs Scribe and answered from the whole source.
@@ -100,7 +101,9 @@ export async function askHosts(e: Episode, question: string, at: number, setting
   let wake: (() => void) | null = null;
   let over = false;
   let failed: unknown = null;
-  const speak = (line: ScriptLine, previous: string) => postJSON<{ audio: string }>("/api/tts", { lines: [line], voices: e.voices, model: e.ttsModel, lang: e.lang, context: { previous } }, headers, signal);
+  // The fast sibling of the episode's model: the same voices, about twice as soon.
+  const model = fastSibling(e.ttsModel, settings.keys.llmProvider === "hosted");
+  const speak = (line: ScriptLine, previous: string) => postJSON<{ audio: string }>("/api/tts", { lines: [line], voices: e.voices, model, lang: e.lang, context: { previous } }, headers, signal);
   const call = postStream<{ lines: ScriptLine[] }>("/api/ask", { question, request, brief: e.brief, source, recent }, headers, () => undefined, signal, (ev) => {
     const line = ev.line as ScriptLine | undefined;
     if (!line?.text) return;

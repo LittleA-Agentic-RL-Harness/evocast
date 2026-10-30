@@ -22,6 +22,7 @@ export async function POST(req: Request) {
       user: prefillUser(body.head.slice(0, 6000), body.title, body.portrait, body.recent.slice(-5), body.uiLang),
       schema: PrefillSchema,
       effort: "low",
+      quick: true,
       maxTokens: 4000,
       mock: () => ({ recipe: fallback.recipe, reason: fallback.reason[body.uiLang] }),
     });

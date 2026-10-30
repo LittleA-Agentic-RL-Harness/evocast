@@ -26,7 +26,7 @@ import type { SharedVoice, Topic } from "@/lib/tts/elevenlabs";
 import { effectiveTtsModel, generateEpisodes, seatVoices, voiceLine, type Progress } from "@/lib/client/pipeline";
 import { LiveAudio } from "@/lib/client/live";
 import { extractFigures, type Figure } from "@/lib/client/figures";
-import { addSession, getActive, getHarness, newId, saveProfile, type Settings } from "@/lib/client/store";
+import { addSession, getActive, getEpisode, getHarness, newId, saveEpisode, saveProfile, type Settings } from "@/lib/client/store";
 import { autoTunePrefill, checkInterfaceGuard } from "@/lib/client/evolution";
 import { maybeAutoTune } from "@/lib/client/autotune";
 import type { Harness } from "@/lib/harness/genome";
@@ -85,7 +85,7 @@ const LENGTHS: Record<number, [string, string]> = {
 };
 
 export default function Home() {
-  const { T, lang, settings, update, sessions, episodes, ui, profile, refresh, play, go, tuning, dismissTuning, undoTuning, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, stop, player, setSheet } = useApp();
+  const { T, lang, settings, update, sessions, episodes, ui, profile, refresh, play, go, tuning, dismissTuning, undoTuning, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, liveWaited, stop, player, setSheet } = useApp();
   const [source, setSource] = useState<Source | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -338,7 +338,12 @@ export default function Home() {
           : {}),
         onSaved: (e) => liveEnd(e),
       });
-      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard, first_ms: eps[0]?.metrics.latencyMs.firstAudio ?? null });
+      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard, first_ms: eps[0]?.metrics.latencyMs.firstAudio ?? null, wait_ms: heard ? liveWaited() : null });
+      // How long the live episode stood still waiting for a chapter, kept with it.
+      if (heard && eps[0]) {
+        const cur = (await getEpisode(eps[0].id)) ?? eps[0];
+        await saveEpisode({ ...cur, metrics: { ...cur.metrics, latencyMs: { ...cur.metrics.latencyMs, stalled: liveWaited() } } });
+      }
       // Only finished episodes teach the prefill; cancelled or failed runs aren't choices.
       await addSession(session);
       if (profile.minutesBias[recipe.persona]) await saveProfile({ ...profile, minutesBias: { ...profile.minutesBias, [recipe.persona]: 0 } });
@@ -875,7 +880,7 @@ function Steps({ run, live }: { run: Run; live: boolean }) {
   return (
     <div>
       <div className="spread caption tabular" style={{ marginBottom: 8 }}>
-        <span>{live ? T("第 1 章好了就开始播放", "Starts playing as soon as chapter 1 is ready") : T("正在生成", "Generating")}</span>
+        <span>{live ? T("开场几秒后就开始播放，其余边听边做", "The opening plays in a few seconds; the rest is made while you listen") : T("正在生成", "Generating")}</span>
         <span>{clock(now - run.started)}</span>
       </div>
       <div className="progress live">

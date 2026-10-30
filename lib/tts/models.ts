@@ -51,3 +51,13 @@ export function newestDialogueModel(ids: string[]): string | null {
     .sort((a, b) => b.v - a.v);
   return ranked[0]?.id ?? null;
 }
+
+/**
+ * The same voices, sooner: a model's Turbo sibling where there is one (on the Gateway, one it
+ * serves). The cold open speaks with it, so its first line arrives in about half the time.
+ */
+export function fastSibling(model: string, gateway = false): string {
+  const turbo = `${model}_turbo`;
+  const info = modelInfo(turbo);
+  return info && !info.dialogue && (!gateway || Boolean(info.gateway)) ? turbo : model;
+}

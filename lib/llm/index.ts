@@ -37,6 +37,11 @@ export interface JSONCall<T> {
   maxTokens?: number;
   /** Deterministic stand-in used by the keyless demo provider. */
   mock: () => T;
+  /**
+   * Latency first (the cold open, an answer, the prefill): no extended thinking on models that let it
+   * be turned off (Claude Haiku 5.5 at this effort), so the first words come sooner.
+   */
+  quick?: boolean;
   /** Characters of output so far and the text itself, as the model writes (streaming providers only). */
   onText?: (chars: number, text: string) => void;
 }
@@ -45,6 +50,8 @@ const ZERO = (model: string): Usage => ({ model, inputTokens: 0, outputTokens: 0
 
 // Models that accept `fallbacks: "default"` (server-side refusal fallback) on the first-party API.
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"]);
+// Claude Haiku 5.5 accepts thinking off at effort high or below; Opus 5.5 and Sonnet 5.5 refuse it.
+const canSkipThinking = (model: string, effort: Effort) => /claude-haiku-5[-.]5/.test(model) && effort !== "high";
 // Effort is supported on the current Claude generation; older models reject it.
 const supportsEffort = (model: string) => /claude-(opus|sonnet|haiku|fable|mythos)-(5|4-[5-8])/.test(model) && !/haiku-4-5|sonnet-4-5/.test(model);
 
@@ -86,6 +93,7 @@ async function anthropicJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ da
         ...(supportsEffort(cfg.model) ? { effort: call.effort } : {}),
         format: betaZodOutputFormat(call.schema),
       },
+      ...(call.quick && canSkipThinking(cfg.model, call.effort) ? { thinking: { type: "disabled" as const } } : {}),
       ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     });
     let soFar = "";

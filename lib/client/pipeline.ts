@@ -13,7 +13,7 @@ import { charsPerMinute, LANG_INFO } from "../harness/langs";
 import { ttsUsd } from "../harness/cost";
 import { chunkCap, chunkScript } from "../tts/chunk";
 import { concatMp3, mp3Duration, mp3Format, stripMp3Headers } from "../tts/mp3";
-import { modelInfo } from "../tts/models";
+import { fastSibling, modelInfo } from "../tts/models";
 import { ApiError, getJSON, keyHeaders, postAudio, postJSON, postStream } from "./api";
 import { idb } from "./store";
 import { getActive, getHarness, getProfile, newId, saveAudio, saveEpisode, saveSource, type Settings } from "./store";
@@ -303,9 +303,9 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
     };
 
     /** Voice some lines in one request: one retry, and a voice that's gone is replaced first, so the retry speaks with its successor. */
-    const speak = (chunk: ScriptLine[], context: { previous?: string; next?: string }, stop = signal) => {
+    const speak = (chunk: ScriptLine[], context: { previous?: string; next?: string }, stop = signal, model = ttsModel) => {
       if (!tts.started) tts.started = Date.now();
-      const call = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk, voices: voiceIds, model: ttsModel, lang, context }, headers, stop);
+      const call = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk, voices: voiceIds, model, lang, context }, headers, stop);
       // A transient provider error shouldn't throw away the script already paid for.
       return call().catch(async (e) => {
         if (stop?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || FINAL.has(e.code ?? "")))) throw e;
@@ -368,7 +368,7 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
             const i = lines.length;
             lines.push(line);
             const previous = lines.slice(Math.max(0, i - 2), i).map((l) => l.text).join(" ").slice(-100);
-            replies[i] = (replies[i - 2] ?? Promise.resolve()).catch(() => undefined).then(() => speak([line], { previous }, opener.signal));
+            replies[i] = (replies[i - 2] ?? Promise.resolve()).catch(() => undefined).then(() => speak([line], { previous }, opener.signal, fastSibling(ttsModel, trial)));
             // A failure is met in order, below; until then it isn't left unhandled.
             replies[i].catch(() => undefined);
           }
@@ -471,10 +471,15 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
       if (n === 1) grading = grade();
 
       for (let k = 0; k < n; k++) {
-        // The cold open is voiced already: chapter 1 goes on after it.
+        // The cold open is voiced already: chapter 1 goes on after it, its first two lines on their
+        // own so they are ready as soon as possible.
         const from = Math.max(chapters[k].start, timings.length);
         const to = k + 1 < chapters.length ? chapters[k + 1].start : lines.length;
-        const chunks = chunkScript(lines.slice(from, to), chunkCap(lang, cpm));
+        const head = from > chapters[k].start ? Math.min(2, to - from) : 0;
+        const chunks = [
+          ...(head ? chunkScript(lines.slice(from, from + head), chunkCap(lang, cpm)) : []),
+          ...chunkScript(lines.slice(from + head, to), chunkCap(lang, cpm)).map((c) => ({ ...c, src: c.src.map((s) => s + head) })),
+        ];
         for (const [ci, chunk] of chunks.entries()) {
           onProgress({ stage: "tts", lang, message: "voicing", pct: playing ? (k === 0 ? span(75, 99, ci / chunks.length) : 100) : overall(k + 0.5 + (0.5 * ci) / chunks.length), chapter: k, chapters: n });
           const context = {
