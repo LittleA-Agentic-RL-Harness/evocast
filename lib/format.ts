@@ -1,3 +1,4 @@
+import { stripTags } from "./tts/tags";
 import type { Episode } from "./types";
 
 // Shared by the browser (downloads) and the CLI (files on disk).
@@ -33,3 +34,15 @@ export function slug(s: string): string {
   return (s.replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-|-$/g, "").slice(0, 60) || "episode").toLowerCase();
 }
 
+/** Start time of every line: exact (from ElevenLabs timestamps) when stored, else proportional to text length. */
+export function lineStarts(e: Episode, duration: number): number[] {
+  if (e.timings && e.timings.length === e.script.lines.length) return e.timings;
+  const lens = e.script.lines.map((l) => Math.max(1, stripTags(l.text).length));
+  const total = lens.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  return lens.map((n) => {
+    const t = (acc / total) * duration;
+    acc += n;
+    return t;
+  });
+}

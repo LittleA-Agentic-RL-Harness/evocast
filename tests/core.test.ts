@@ -149,7 +149,7 @@ test("rule checks: length, balance, fillers, tags, ear-friendliness", () => {
 });
 
 test("test suite combines document, standard and persona tests", () => {
-  const suite = buildTestSuite([{ id: "T1", kind: "coverage", check: "x" }], req, SEED_MEDIUM);
+  const suite = buildTestSuite([{ id: "T1", kind: "coverage", check: "x" }], req);
   assert.deepEqual(suite.map((t) => t.id), ["T1", "S1", "S2", "P1", "P2", "P3"]);
 });
 
@@ -182,4 +182,30 @@ test("listener profile learns from chips, scoped per persona", () => {
   assert.equal(p.minutesBias.executive, -2);
   assert.equal(notesFor(p, "executive").length, 1);
   assert.equal(notesFor(p, "researcher").length, 0);
+});
+
+test("rules grade every harness against the seed's bar, so shortening the target can't buy a pass", () => {
+  const req = { persona: "engineer", style: "studio", mode: "lite", minutes: 5, lenses: [], lang: "en" } as unknown as EpisodeRequest;
+  const target = SEED_MEDIUM.script.charsPerMinute.en * 5;
+  const line = "Evidence matters more than adjectives, so here is the number and its baseline. ";
+  const text = line.repeat(Math.ceil((target * 0.7) / line.length)).slice(0, Math.round(target * 0.7));
+  const words = text.split(" ");
+  const half = Math.floor(words.length / 2);
+  const script = { title: "t", lines: [{ speaker: "A", text: words.slice(0, half).join(" ") }, { speaker: "B", text: words.slice(half).join(" ") }], show_notes: [] } as unknown as Script;
+  const cheaper = { ...SEED_MEDIUM, script: { ...SEED_MEDIUM.script, charsPerMinute: { ...SEED_MEDIUM.script.charsPerMinute, en: SEED_MEDIUM.script.charsPerMinute.en * 0.7 }, maxTurnChars: { zh: 400, en: 1000 } } };
+  const r1 = checkRules(script, req, cheaper).find((r) => r.id === "R1")!;
+  assert.equal(r1.pass, false, r1.note);
+  assert.match(r1.note, new RegExp(`target ${target}`));
+});
+
+test("tags: long documented cues are matched; pauses are ellipses, not a tag", () => {
+  assert.equal(stripTags("[interrupting, then stopping abruptly] Wait."), "Wait.");
+  assert.equal(sanitizeTags("[overlapping] Right [pause] so"), "[overlapping] Right so");
+});
+
+test("a feedback chip keeps the portrait summary and the listener's name", () => {
+  const p = applyChip({ ...EMPTY_PROFILE, summary: "Reads papers on the train", name: "Ada" }, "too-long", "engineer");
+  assert.equal(p.summary, "Reads papers on the train");
+  assert.equal(p.name, "Ada");
+  assert.equal(p.minutesBias.engineer, -1);
 });

@@ -1,5 +1,5 @@
 import { composeSting, ElevenError } from "@/lib/tts/elevenlabs";
-import { gatewayMusic, GATEWAY_MUSIC_USD_PER_S } from "@/lib/tts/gateway";
+import { gatewayMusic, gatewaySpeechPrice, GATEWAY_MUSIC_USD_PER_S } from "@/lib/tts/gateway";
 import { errorResponse, isTrial, resolveElevenKey, resolveTrialSpeech } from "@/lib/server/keys";
 import { silentMp3 } from "@/lib/tts/mp3";
 
@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       const { apiKey, meter } = resolveTrialSpeech(req);
       await meter.admit();
       const audio = await gatewayMusic(apiKey, PROMPTS[style] ?? PROMPTS.studio).catch((e) => Promise.reject(meter.translate(e)));
-      await meter.record("music", 7 * GATEWAY_MUSIC_USD_PER_S, 7);
+      await meter.record("music", 7 * ((await gatewaySpeechPrice("elevenlabs/music-v2.5"))?.perSecond ?? GATEWAY_MUSIC_USD_PER_S), 7);
       return new Response(audio as BodyInit, { headers: { "content-type": "audio/mpeg" } });
     }
     const key = resolveElevenKey(req);

@@ -3,7 +3,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
-import { Button, Dialog, Disclosure, Segmented, Toggle, springSoft } from "../ui/kit";
+import { Button, Dialog, Disclosure, Segmented, Toggle, fade } from "../ui/kit";
 import { Check, Key, Play, Pause, Sparkles } from "../ui/icons";
 import type { Lang, Speaker, StyleId } from "@/lib/types";
 import { STYLES, STYLE_IDS, resolveVoices, type VoiceSlot } from "@/lib/harness/styles";
@@ -58,7 +58,7 @@ export default function SettingsView() {
             <div className="grow">
               <div style={{ fontWeight: 550 }}>ElevenLabs</div>
               <div className="caption">
-                {k.elevenlabsKey ? `${k.elevenlabsTier ?? ""} · ${modelInfo(k.elevenlabsModel ?? "")?.label.split(" ·")[0] ?? k.elevenlabsModel ?? "Eleven v4"}` : trial ? T("免费试用 · Eleven v4", "Free trial · Eleven v4") : T("未设置", "Not set")}
+                {k.elevenlabsKey ? [k.elevenlabsTier, modelInfo(k.elevenlabsModel ?? "")?.label.split(" ·")[0] ?? k.elevenlabsModel ?? "Eleven v4"].filter(Boolean).join(" · ") : trial ? T("免费试用 · Eleven v4", "Free trial · Eleven v4") : T("未设置", "Not set")}
               </div>
             </div>
             {k.elevenlabsKey && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
@@ -77,7 +77,7 @@ export default function SettingsView() {
         </div>
       </Section>
 
-      <Voices />
+      {k.elevenlabsKey && <Voices />}
 
       <Section title={T("通用", "General")}>
         <div className="card list" style={{ padding: "4px 21px" }}>
@@ -88,13 +88,6 @@ export default function SettingsView() {
           <div className="list-row">
             <span className="grow">{T("语言", "Language")}</span>
             <Segmented value={settings.uiLang} onChange={(l: Lang) => update({ ...settings, uiLang: l })} options={[{ value: "zh", label: "中文" }, { value: "en", label: "English" }]} />
-          </div>
-          <div className="list-row">
-            <div className="grow">
-              <div>{T("显示全部功能", "Show everything")}</div>
-              <div className="caption">{T("默认会随着使用逐步出现", "By default, features appear as you use the app")}</div>
-            </div>
-            <Toggle on={Boolean(settings.showAll)} onChange={(v) => update({ ...settings, showAll: v })} label="show all" />
           </div>
           <div className="list-row">
             <div className="grow">
@@ -109,6 +102,14 @@ export default function SettingsView() {
       <Disclosure title={T("高级", "Advanced")}>
         <div className="stack-lg">
           <div className="card list" style={{ padding: "4px 21px" }}>
+          <div className="list-row">
+            <div className="grow">
+              <div>{T("显示全部功能", "Show everything")}</div>
+              <div className="caption">{T("默认会随着使用逐步出现", "By default, features appear as you use the app")}</div>
+            </div>
+            <Toggle on={Boolean(settings.showAll)} onChange={(v) => update({ ...settings, showAll: v })} label="show all" />
+          </div>
+            <Sting />
             <div className="list-row">
               <div className="grow">
                 <div>{T("共享部署口令", "Shared deployment passcode")}</div>
@@ -138,9 +139,6 @@ export default function SettingsView() {
             >
               {T("清空本地数据", "Erase local data")}
             </Button>
-            <Button size="small" variant="plain" onClick={() => update({ ...DEFAULT_SETTINGS, uiLang: settings.uiLang })}>
-              {T("重置设置", "Reset settings")}
-            </Button>
           </div>
         </div>
       </Disclosure>
@@ -159,22 +157,12 @@ interface Target {
 const AVATAR = ["#5e5ce6", "#bf5af2", "#ff375f", "#ff9f0a", "#30b0c7", "#0a84ff"];
 const initials = (name: string) => name.trim().slice(0, 1).toUpperCase();
 
-function Voices() {
+/** An optional 7-second Eleven Music intro, generated once per style and cached. */
+function Sting() {
   const { T, lang, settings, update } = useApp();
-  const [target, setTarget] = useState<Target | null>(null);
   const [stingState, setStingState] = useState<"idle" | "working" | "error">("idle");
   const [stingUrl, setStingUrl] = useState<string | null>(null);
   const headers = keyHeaders(settings.keys);
-
-  const assign = (t: Target, slot: VoiceSlot | null) => {
-    const o = structuredClone(settings.voiceOverrides);
-    o[t.style] ??= {};
-    o[t.style]![t.lang] ??= {};
-    if (slot) o[t.style]![t.lang]![t.speaker] = slot;
-    else delete o[t.style]![t.lang]![t.speaker];
-    update({ ...settings, voiceOverrides: o });
-  };
-
   async function previewSting(style: StyleId) {
     setStingState("working");
     try {
@@ -185,6 +173,44 @@ function Voices() {
       setStingState("error");
     }
   }
+  return (
+    <>
+      <div className="list-row">
+        <div className="grow">
+          <div>{T("片头音乐（Eleven Music）", "Intro sting (Eleven Music)")}</div>
+          <div className="caption">{T("为每种声线生成一次 7 秒片头并缓存，约 $0.02。", "A 7-second sting per style, generated once and cached; ~$0.02.")}</div>
+        </div>
+        <Toggle on={Boolean(settings.sting)} onChange={(v) => update({ ...settings, sting: v })} label="sting" />
+      </div>
+      {settings.sting && (
+        <div className="list-row">
+          {STYLE_IDS.map((s) => (
+            <Button key={s} size="small" onClick={() => previewSting(s)} disabled={stingState === "working"}>
+              {T("试听", "Preview")} · {STYLES[s].label[lang]}
+            </Button>
+          ))}
+          {stingState === "working" && <span className="caption">{T("作曲中…", "Composing…")}</span>}
+          {stingState === "error" && <span className="caption" style={{ color: "var(--red)" }}>{T("生成失败", "Failed")}</span>}
+          {stingUrl && <audio src={stingUrl} controls autoPlay style={{ height: 32 }} />}
+        </div>
+      )}
+    </>
+  );
+}
+
+function Voices() {
+  const { T, lang, settings, update } = useApp();
+  const [target, setTarget] = useState<Target | null>(null);
+
+  const assign = (t: Target, slot: VoiceSlot | null) => {
+    const o = structuredClone(settings.voiceOverrides);
+    o[t.style] ??= {};
+    o[t.style]![t.lang] ??= {};
+    if (slot) o[t.style]![t.lang]![t.speaker] = slot;
+    else delete o[t.style]![t.lang]![t.speaker];
+    update({ ...settings, voiceOverrides: o });
+  };
+
 
   return (
     <Section title={T("声音", "Voices")} hint={T("每个声线有中英文各两位主播。点任意一位，看看 ElevenLabs 为这个位置推荐的声音，或用一句话设计新声音。", "Each style has two hosts per language. Tap one to see ElevenLabs' picks for that seat, or design a new voice from one sentence.")}>
@@ -204,7 +230,7 @@ function Voices() {
                 {(["A", "B"] as Speaker[]).map((sp, i) => {
                   const custom = Boolean(settings.voiceOverrides[style]?.[l]?.[sp]);
                   return (
-                    <button key={sp} className="card flat lift" onClick={() => setTarget({ style, lang: l, speaker: sp })} style={{ flex: 1, minWidth: 0, padding: 10, display: "flex", gap: 10, alignItems: "center", border: 0, cursor: "pointer", textAlign: "left" }}>
+                    <button key={sp} className="card flat" onClick={() => setTarget({ style, lang: l, speaker: sp })} style={{ flex: 1, minWidth: 0, padding: 10, display: "flex", gap: 10, alignItems: "center", border: 0, cursor: "pointer", textAlign: "left" }}>
                       <span className="avatar" style={{ background: AVATAR[(i + (style === "idol" ? 2 : 0) + (l === "en" ? 1 : 0)) % AVATAR.length] }}>{initials(v[sp].name)}</span>
                       <span style={{ minWidth: 0 }}>
                         <span className="ellipsis" style={{ display: "block", fontWeight: 550, fontSize: 14 }}>{v[sp].name.split(" –")[0]}</span>
@@ -221,29 +247,6 @@ function Voices() {
           })}
         </div>
       ))}
-
-      <div className="card list" style={{ padding: "4px 21px" }}>
-        <div className="list-row">
-          <Sparkles size={18} style={{ color: "var(--accent)" }} />
-          <div className="grow">
-            <div>{T("片头音乐（Eleven Music）", "Intro sting (Eleven Music)")}</div>
-            <div className="caption">{T("为每种声线生成一次 7 秒片头并缓存；需付费套餐，约 $0.02。", "A 7-second sting per style, generated once and cached; paid plans, ~$0.02.")}</div>
-          </div>
-          <Toggle on={Boolean(settings.sting)} onChange={(v) => update({ ...settings, sting: v })} label="sting" />
-        </div>
-        {settings.sting && (
-          <div className="list-row">
-            {STYLE_IDS.map((s) => (
-              <Button key={s} size="small" onClick={() => previewSting(s)} disabled={stingState === "working"}>
-                {T("试听", "Preview")} · {STYLES[s].label[lang]}
-              </Button>
-            ))}
-            {stingState === "working" && <span className="caption">{T("作曲中…", "Composing…")}</span>}
-            {stingState === "error" && <span className="caption" style={{ color: "var(--red)" }}>{T("生成失败（需付费套餐）", "Failed (paid plan needed)")}</span>}
-            {stingUrl && <audio src={stingUrl} controls autoPlay style={{ height: 32 }} />}
-          </div>
-        )}
-      </div>
 
       <VoicePicker target={target} onClose={() => setTarget(null)} onPick={(slot) => { if (target) assign(target, slot); setTarget(null); }} onReset={() => { if (target) assign(target, null); setTarget(null); }} />
     </Section>
@@ -405,7 +408,7 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
               <p className="hint">{T("Voice Design 所有套餐可用，只按试听文字计费；保存会占用一个自定义声音位。", "Voice Design works on every plan and bills only the preview text; saving uses a custom voice slot.")}</p>
               <AnimatePresence>
                 {previews.map((p, i) => (
-                  <motion.div key={p.generated_voice_id} className="voice-row" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...springSoft, delay: i * 0.06 }}>
+                  <motion.div key={p.generated_voice_id} className="voice-row" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ ...fade, delay: i * 0.06 }}>
                     <PreviewButton src={`data:${p.media_type};base64,${p.audio_base_64}`} />
                     <span className="grow">{T(`方案 ${i + 1}`, `Option ${i + 1}`)} · {p.duration_secs.toFixed(1)}s</span>
                     <Button size="small" variant="primary" onClick={() => saveDesign(p)} disabled={busy}>{T("保存并使用", "Save & use")}</Button>

@@ -1,5 +1,6 @@
 "use client";
 
+import { lineStarts } from "../format";
 import type { Episode, EpisodeRequest, Mode } from "../types";
 import { applyPatch, describeOp, diffHarness, SEEDS, type Harness, type PatchOp } from "../harness/genome";
 import { MODE_WEIGHTS, paretoFilter, selectModes, SPREAD_WEIGHTS } from "../harness/pareto";
@@ -94,8 +95,27 @@ export async function resetValidationSet() {
   await idb.del("kv", "val-set");
 }
 
+/** What the listener did, in words the analyzer can act on ("stopped at line 14/30"). */
+function listening(e: Episode, f: NonNullable<Episode["feedback"]>): string {
+  const starts = lineStarts(e, e.durationSec);
+  const line = f.stoppedAt != null && f.stoppedAt < e.durationSec - 2 ? starts.filter((t) => t <= f.stoppedAt!).length : null;
+  return [
+    `rating=${f.rating}`,
+    `tags=[${f.tags.join(", ")}]`,
+    f.note && `note="${f.note}"`,
+    `heard=${Math.round(f.listenedPct)}%`,
+    `finished=${f.replays}x`,
+    f.rate && f.rate !== 1 && `speed=${f.rate}x`,
+    f.backSeeks && `jumped-back=${f.backSeeks}x`,
+    f.skippedSec && `skipped=${f.skippedSec}s`,
+    line && `stopped-at-line=${line}/${e.script.lines.length}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function traceOf(e: Episode, h: Harness): EpisodeTrace {
-  const checks = new Map([...buildTestSuite(e.tests, requestOf(e), h), ...RULE_TESTS].map((t) => [t.id, t.check]));
+  const checks = new Map([...buildTestSuite(e.tests, requestOf(e)), ...RULE_TESTS].map((t) => [t.id, t.check]));
   const f = e.feedback;
   return {
     id: e.id,
@@ -111,9 +131,7 @@ function traceOf(e: Episode, h: Harness): EpisodeTrace {
     passRate: e.metrics.passRate,
     failed: e.results.filter((r) => !r.pass).map((r) => ({ id: r.id, check: checks.get(r.id) ?? r.id, note: r.note })),
     costUsd: Number((e.metrics.llmUsd + e.metrics.ttsUsd).toFixed(4)),
-    feedback: f
-      ? `rating=${f.rating} tags=[${f.tags.join(", ")}] note="${f.note}" listened=${Math.round(f.listenedPct)}% replays=${f.replays}`
-      : "no feedback",
+    feedback: f ? listening(e, f) : "never played",
     opening: e.script.lines.slice(0, 3).map((l) => `${l.speaker}: ${l.text}`).join(" | ").slice(0, 600),
     closing: e.script.lines.slice(-2).map((l) => `${l.speaker}: ${l.text}`).join(" | ").slice(0, 400),
   };
@@ -281,6 +299,30 @@ export function estimateEpochUsd(episodes: Episode[], opts: { breadth: "quick" |
  * sessions, (2) the interface planner rewrites prefill rules / shortcuts / disclosure /
  * tone from evidence, (3) a live guard (see checkInterfaceGuard) reverts regressions.
  */
+/**
+ * The free half of interface learning, after every finished episode: replay past sessions to
+ * re-tune the prefill knobs, and adopt the result only on a clear gain (≥ 3 points over ≥ 6
+ * sessions). The usual guard still reverts it if live choices disagree. Returns "62% → 71%".
+ */
+export async function autoTunePrefill(uiLang: Episode["lang"]): Promise<string | null> {
+  const sessions = await getSessions();
+  if (sessions.length < 6) return null;
+  const g = await getUIGenome();
+  const tuned = tunePrefill(g, sessions, DEFAULT_RECIPE(uiLang));
+  if (tuned.genome === g || tuned.before === null || tuned.after === null || tuned.after - tuned.before < 0.03) return null;
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
+  const p = tuned.genome.prefill;
+  const next: UIGenome = {
+    ...tuned.genome,
+    id: newId("ui"),
+    parentId: g.id,
+    createdAt: new Date().toISOString(),
+    changelog: [...g.changelog.slice(-9), `Replay-tuned prefill: ${p.strategy}, half-life ${p.halfLife}, content weight ${p.contentWeight} (hit ${pct(tuned.before)} → ${pct(tuned.after)})`],
+  };
+  await setUIGenome(next, { parentId: g.id, parentRate: prefillHitRate(sessions.slice(-6)), since: new Date().toISOString() });
+  return `${pct(tuned.before)} → ${pct(tuned.after)}`;
+}
+
 export async function evolveInterface(settings: Settings, onLog: (l: string) => void, signal: AbortSignal | undefined, episodes: Episode[]): Promise<string[]> {
   const sessions = await getSessions();
   const g = await getUIGenome();

@@ -105,7 +105,7 @@ async function writeScript(cfg: LLMConfig, h: Harness, brief: Brief, req: Episod
 }
 
 export async function gradeScript(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest) {
-  const suite = buildTestSuite(docTests, req, h);
+  const suite = buildTestSuite(docTests, req);
   const rules = checkRules(script, req, h);
   const r = await callJSON(cfg, {
     system: gradeSystem(),

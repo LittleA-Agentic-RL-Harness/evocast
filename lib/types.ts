@@ -88,6 +88,10 @@ export interface Feedback {
   replays: number;
   /** Last playback speed used. */
   rate?: number;
+  /** Times the listener jumped back, seconds skipped forward, and where playback last stopped (s). */
+  backSeeks?: number;
+  skippedSec?: number;
+  stoppedAt?: number;
   updatedAt: string;
 }
 

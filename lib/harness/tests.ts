@@ -1,18 +1,25 @@
 import type { EpisodeRequest, Script, TestCase, TestResult } from "../types";
-import type { Harness } from "./genome";
+import { SEEDS, type Harness } from "./genome";
 import { PERSONAS } from "./personas";
 import { tagsEnabled, targetChars } from "./prompts";
 import { ALLOWED_TAGS, findTags, stripTags } from "../tts/tags";
 
 /**
+ * The bar every harness is graded against: the seed's thresholds, never the candidate's own.
+ * Evolution may edit length, turn and reaction settings; if they also moved the bar, a cheaper
+ * harness could write a 3½-minute "5-minute" episode and still pass every test.
+ */
+const BAR = SEEDS.medium;
+
+/**
  * Full fixed test suite for one (document, request): the document's synthesized tests
  * + standard tests + persona tests. Rule tests (R*) are checked in code; the rest by the LLM grader.
  */
-export function buildTestSuite(docTests: TestCase[], req: EpisodeRequest, h: Harness): TestCase[] {
+export function buildTestSuite(docTests: TestCase[], req: EpisodeRequest): TestCase[] {
   const persona = PERSONAS[req.persona];
   return [
     ...docTests,
-    { id: "S1", kind: "structure", check: `The first ${h.script.hookLines} line(s) deliver a concrete hook (a surprising finding, number or tension), not a generic greeting or show intro.` },
+    { id: "S1", kind: "structure", check: `The first ${BAR.script.hookLines} line(s) deliver a concrete hook (a surprising finding, number or tension), not a generic greeting or show intro.` },
     { id: "S2", kind: "forbidden", check: "States no number or factual claim about the source that is absent from, or contradicts, the brief." },
     ...persona.tests.map((check, i): TestCase => ({ id: `P${i + 1}`, kind: "audience", check })),
   ];
@@ -32,12 +39,13 @@ const FILLER = /^(\[[^\]]+\]\s*)?(wow|whoa|exactly|right|totally|absolutely|yeah
 export function checkRules(script: Script, req: EpisodeRequest, h: Harness): TestResult[] {
   const spoken = script.lines.map((l) => stripTags(l.text));
   const total = spoken.reduce((n, t) => n + t.length, 0);
-  const target = targetChars(h, req.lang, req.minutes);
-  const maxTurn = h.script.maxTurnChars[req.lang] * 1.5;
+  const target = targetChars(BAR, req.lang, req.minutes);
+  const maxTurn = BAR.script.maxTurnChars[req.lang] * 1.5;
   const aChars = script.lines.filter((l) => l.speaker === "A").reduce((n, l) => n + stripTags(l.text).length, 0);
   const share = total ? aChars / total : 0;
   const fillers = spoken.filter((t) => FILLER.test(t.trim())).length;
-  const budget = Math.floor(h.script.reactionsPerMinute * req.minutes);
+  const budget = Math.floor(BAR.script.reactionsPerMinute * req.minutes);
+  // Tag support follows the candidate's voice model, which is a real capability, not a threshold.
   const allowTags = tagsEnabled(h);
   const badTags = script.lines.flatMap((l) => findTags(l.text)).filter((t) => !allowTags || !(ALLOWED_TAGS as readonly string[]).includes(t));
   const earIssues = spoken.filter((t) => /https?:\/\/|www\.|\bet al\.|\[\d+\]|\*\*|^#|^\s*[-•]\s/.test(t));

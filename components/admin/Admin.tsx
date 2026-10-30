@@ -3,7 +3,7 @@
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Mark } from "../ui/Mark";
-import { Button, Reveal, Segmented, spotlight, springSoft } from "../ui/kit";
+import { Button, Reveal, Segmented, fade } from "../ui/kit";
 import { Download, Exit, Key, Refresh, Xmark } from "../ui/icons";
 import type { AdminStats as Stats } from "@/app/api/admin/stats/route";
 
@@ -37,7 +37,7 @@ export default function Admin({ state }: { state: "setup" | "login" | "in" }) {
 function Centered({ children }: { children: ReactNode }) {
   return (
     <main className="page" style={{ display: "grid", placeItems: "center", paddingTop: 34 }}>
-      <motion.div className="column stack-lg center" style={{ width: "min(420px, 100%)" }} initial={{ opacity: 0, y: 13 }} animate={{ opacity: 1, y: 0 }} transition={springSoft}>
+      <motion.div className="column stack-lg center" style={{ width: "min(420px, 100%)" }} initial={{ opacity: 0, y: 13 }} animate={{ opacity: 1, y: 0 }} transition={fade}>
         <div style={{ display: "grid", placeItems: "center" }}>
           <Mark size={55} />
         </div>
@@ -229,7 +229,7 @@ function Dashboard({ T }: { T: T }) {
 function Card({ title, hint, right, children }: { title: string; hint?: string; right?: ReactNode; children: ReactNode }) {
   return (
     <Reveal>
-      <section className="card spotlight" onPointerMove={spotlight}>
+      <section className="card">
         <div className="card-head">
           <div className="stack" style={{ gap: 2 }}>
             <h2 className="headline" style={{ fontSize: 17 }}>{title}</h2>

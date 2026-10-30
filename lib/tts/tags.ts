@@ -13,12 +13,16 @@ export const ALLOWED_TAGS = [
   "mischievously",
   "cheerfully",
   "giggling",
-  "pause",
+  "starts laughing",
   "jumping in",
   "interrupting",
+  "overlapping",
+  "starting to speak",
 ] as const;
 
-const TAG_RE = /\[([a-zA-Z][a-zA-Z \-']{1,30})\]/g;
+// Documented cues can be long and carry commas ("[interrupting, then stopping abruptly]"): match
+// them so models without tag support never read them aloud. Pauses are written as "…", not a tag.
+const TAG_RE = /\[([a-zA-Z][a-zA-Z ,\-']{1,59})\]/g;
 
 export function findTags(text: string): string[] {
   return [...text.matchAll(TAG_RE)].map((m) => m[1].toLowerCase().trim());

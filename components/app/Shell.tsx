@@ -1,10 +1,9 @@
 "use client";
 
-import { AnimatePresence, MotionConfig, MotionGlobalConfig, motion } from "motion/react";
+import { MotionConfig, MotionGlobalConfig } from "motion/react";
 import { useEffect } from "react";
 import { initTracking, setView } from "@/lib/client/track";
 import { AppProvider, useApp, type View } from "./context";
-import { spring, springSoft } from "../ui/kit";
 import { Gear } from "../ui/icons";
 import Onboarding from "./Onboarding";
 import Home from "./Home";
@@ -33,14 +32,12 @@ function Bar() {
         </button>
         {visible.length > 1 ? (
           <nav className="nav" aria-label={T("主导航", "Main")}>
-            <AnimatePresence initial={false}>
-              {visible.map(([id, label]) => (
-                <motion.button key={id} data-track={`nav_${id}`} layout initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={spring} aria-current={view === id ? "page" : undefined} onClick={() => go(id)}>
-                  {view === id && <motion.span layoutId="nav-pill" className="pill" transition={spring} />}
-                  {label}
-                </motion.button>
-              ))}
-            </AnimatePresence>
+            {visible.map(([id, label]) => (
+              <button key={id} data-track={`nav_${id}`} aria-current={view === id ? "page" : undefined} onClick={() => go(id)}>
+                {view === id && <span className="pill" />}
+                {label}
+              </button>
+            ))}
           </nav>
         ) : (
           <span style={{ margin: "0 auto" }} />
@@ -68,14 +65,12 @@ function Views() {
   return (
     <>
       <Bar />
-      <AnimatePresence mode="wait">
-        <motion.main key={view} className="page" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6, transition: { duration: 0.15 } }} transition={springSoft}>
-          {view === "home" && <Home />}
-          {view === "listen" && <Listen />}
-          {view === "you" && <You />}
-          {view === "settings" && <SettingsView />}
-        </motion.main>
-      </AnimatePresence>
+      <main key={view} className="page">
+        {view === "home" && <Home />}
+        {view === "listen" && <Listen />}
+        {view === "you" && <You />}
+        {view === "settings" && <SettingsView />}
+      </main>
       <MiniPlayer />
       <NowPlaying />
     </>
@@ -100,7 +95,8 @@ function usePlatform() {
 export default function Shell() {
   usePlatform();
   return (
-    <MotionConfig reducedMotion="user">
+    // Calm by design: no movement anywhere (slides, scales, springs, layout); appearing things only fade.
+    <MotionConfig reducedMotion="always">
       <AppProvider>
         <Views />
       </AppProvider>

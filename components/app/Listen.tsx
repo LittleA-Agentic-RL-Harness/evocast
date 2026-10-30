@@ -1,19 +1,16 @@
 "use client";
 
-import { motion } from "motion/react";
 import { useApp } from "./context";
 import Artwork from "../ui/Artwork";
-import { Button, Reveal, Segmented } from "../ui/kit";
+import { Button, Reveal } from "../ui/kit";
 import { Play, Pause } from "../ui/icons";
 import { PERSONAS } from "@/lib/harness/personas";
-import { useState } from "react";
 
 export const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 export default function Listen() {
   const { T, lang, episodes, play, player, go } = useApp();
-  const [filter, setFilter] = useState<"all" | "zh" | "en">("all");
-  const list = episodes.filter((e) => filter === "all" || e.lang === filter);
+  const list = episodes;
 
   if (!episodes.length) {
     return (
@@ -38,11 +35,8 @@ export default function Listen() {
             {T(`${episodes.length} 期 · 共 ${Math.round(episodes.reduce((a, e) => a + e.durationSec, 0) / 60)} 分钟`, `${episodes.length} episode${episodes.length === 1 ? "" : "s"} · ${Math.round(episodes.reduce((a, e) => a + e.durationSec, 0) / 60)} min`)}
           </span>
         </div>
-        {new Set(episodes.map((e) => e.lang)).size > 1 && (
-          <Segmented value={filter} onChange={setFilter} label="language" options={[{ value: "all", label: T("全部", "All") }, { value: "zh", label: "中文" }, { value: "en", label: "English" }]} />
-        )}
       </div>
-      <motion.div className="shelf" layout>
+      <div className="shelf">
         {list.map((e, i) => {
           const current = player.episode?.id === e.id;
           const pct = e.feedback?.listenedPct ?? 0;
@@ -51,9 +45,7 @@ export default function Listen() {
               <button className="ep-card" data-track="episode" data-private onClick={() => play(e, true)} aria-label={e.title}>
                 <div className="ep-art">
                   <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
-                  <span className="ep-play" style={current && player.playing ? { opacity: 1, transform: "none" } : undefined}>
-                    {current && player.playing ? <Pause size={15} /> : <Play size={15} />}
-                  </span>
+                  {current && <span className="ep-play">{player.playing ? <Pause size={15} /> : <Play size={15} />}</span>}
                   {pct > 0 && pct < 98 && (
                     <span style={{ position: "absolute", left: 0, bottom: 0, height: 3, width: `${pct}%`, background: "var(--accent)" }} />
                   )}
@@ -71,7 +63,7 @@ export default function Listen() {
             </Reveal>
           );
         })}
-      </motion.div>
+      </div>
     </div>
   );
 }

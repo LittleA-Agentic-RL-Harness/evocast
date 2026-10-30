@@ -6,7 +6,7 @@ import { visibleSurfaces, type Session, type Surface, type UIGenome } from "@/li
 import { SEED_UI } from "@/lib/harness/ui";
 import { EMPTY_PROFILE, type ListenerProfile } from "@/lib/harness/profile";
 import { track } from "@/lib/client/track";
-import { DEFAULT_SETTINGS, getAudio, getProfile, getSessions, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, type Settings } from "@/lib/client/store";
+import { DEFAULT_SETTINGS, getAudio, getEpisode, getProfile, getSessions, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, type Settings } from "@/lib/client/store";
 
 export type View = "home" | "listen" | "you" | "settings";
 
@@ -59,9 +59,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [ui, setUI] = useState<UIGenome>(SEED_UI);
   const [profile, setProfile] = useState<ListenerProfile>(EMPTY_PROFILE);
   const [player, setPlayer] = useState<PlayerState>({ episode: null, playing: false, time: 0, duration: 0, rate: 1, sheet: false });
+  // Listening writes are queued; they're tagged with the episode playing when queued (stop() clears it right after).
+  const episodeRef = useRef<Episode | null>(null);
+  episodeRef.current = player.episode;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
-  const maxPos = useRef(0);
+  // Listening as it really happened: seconds actually played (not the furthest point a seek reached),
+  // jumps back, and seconds skipped forward. Reset per episode; folded into its feedback on pause.
+  const played = useRef(0);
+  const lastPos = useRef(0);
+  const backSeeks = useRef(0);
+  const skipped = useRef(0);
   const reached = useRef(new Set<number>());
 
   /** Listening milestones (25/50/75/100%) once per episode per play-through. */
@@ -107,18 +115,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ------------------------------------------------------------ audio engine
-  const persistListening = useCallback(async () => {
-    const ep = player.episode;
+  // Pause and ended fire back to back: queue the writes so neither overwrites the other.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const persistListening = useCallback((finished = false) => {
+    const ep = episodeRef.current;
+    return (queue.current = queue.current.then(() => saveListening(ep, finished)).catch(() => undefined));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const saveListening = async (ep: Episode | null, finished: boolean) => {
     const a = audioRef.current;
     if (!ep || !a || !a.duration || !isFinite(a.duration)) return;
-    const pct = Math.min(100, (maxPos.current / a.duration) * 100);
-    const fb = ep.feedback ?? { rating: 0 as const, tags: [], note: "", listenedPct: 0, replays: 0, updatedAt: "" };
-    if (pct <= fb.listenedPct + 1 && fb.rate === a.playbackRate) return;
-    const next = { ...ep, feedback: { ...fb, listenedPct: Math.max(fb.listenedPct, pct), rate: a.playbackRate, updatedAt: new Date().toISOString() } };
+    const heard = played.current / a.duration;
+    // Re-read: rating and chips may have been saved since this episode was loaded.
+    const cur = (await getEpisode(ep.id)) ?? ep;
+    const fb = cur.feedback ?? { rating: 0 as const, tags: [], note: "", listenedPct: 0, replays: 0, updatedAt: "" };
+    const next = {
+      ...cur,
+      feedback: {
+        ...fb,
+        listenedPct: Math.max(fb.listenedPct, Math.min(100, heard * 100)),
+        // A finish counts only when most of it was heard, not after scrubbing to the end.
+        replays: fb.replays + (finished && heard >= 0.8 ? 1 : 0),
+        rate: a.playbackRate,
+        backSeeks: (fb.backSeeks ?? 0) + backSeeks.current,
+        skippedSec: Math.round((fb.skippedSec ?? 0) + skipped.current),
+        stoppedAt: Math.round(finished ? a.duration : a.currentTime),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    backSeeks.current = 0;
+    skipped.current = 0;
+    if (finished) played.current = 0;
     await saveEpisode(next);
     setEpisodes((all) => all.map((x) => (x.id === next.id ? next : x)));
     setPlayer((p) => (p.episode?.id === next.id ? { ...p, episode: next } : p));
-  }, [player.episode]);
+  };
 
   const play = useCallback(
     async (e: Episode, openSheet = false) => {
@@ -134,7 +164,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!blob) return;
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
       urlRef.current = URL.createObjectURL(blob);
-      maxPos.current = 0;
+      played.current = 0;
+      lastPos.current = 0;
+      backSeeks.current = 0;
+      skipped.current = 0;
       reached.current = new Set();
       track("play", { lang: e.lang, persona: e.persona, style: e.style, seconds: Math.round(e.durationSec) });
       a.src = urlRef.current;
@@ -200,21 +233,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }}
         onTimeUpdate={(e) => {
           const a = e.currentTarget;
-          maxPos.current = Math.max(maxPos.current, a.currentTime);
+          const d = a.currentTime - lastPos.current;
+          if (d > 0 && d < 2.5) played.current += d;
+          else if (d <= -1) backSeeks.current++;
+          else if (d >= 2.5) skipped.current += d;
+          lastPos.current = a.currentTime;
           if (isFinite(a.duration) && a.duration > 0) milestone((a.currentTime / a.duration) * 100);
           setPlayer((p) => ({ ...p, time: a.currentTime, duration: isFinite(a.duration) ? a.duration : p.duration }));
         }}
-        onEnded={async () => {
-          maxPos.current = audioRef.current?.duration ?? maxPos.current;
+        onEnded={() => {
           milestone(100);
-          const ep = player.episode;
-          if (ep) {
-            const fb = ep.feedback ?? { rating: 0 as const, tags: [], note: "", listenedPct: 0, replays: 0, updatedAt: "" };
-            const next = { ...ep, feedback: { ...fb, listenedPct: 100, replays: fb.replays + 1, updatedAt: new Date().toISOString() } };
-            await saveEpisode(next);
-            setEpisodes((all) => all.map((x) => (x.id === next.id ? next : x)));
-            setPlayer((p) => ({ ...p, episode: next }));
-          }
+          persistListening(true);
         }}
       />
     </AppCtx.Provider>

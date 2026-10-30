@@ -3,14 +3,14 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
-import { Button, Disclosure, Reveal, Segmented, spring } from "../ui/kit";
+import { Button, Disclosure, Reveal, Segmented, fade } from "../ui/kit";
 import { Wand, Xmark } from "../ui/icons";
 import type { Lang, Mode } from "@/lib/types";
 import { buildPortrait, FILLED, portraitCompleteness, type Piece } from "@/lib/harness/portrait";
 import { DEFAULT_RECIPE, prefillHitRate, replayHitRate } from "@/lib/harness/ui";
 import { diffHarness, SEEDS } from "@/lib/harness/genome";
 import { modelInfo } from "@/lib/tts/models";
-import { estimateEpochUsd, evolveInterface, runEpoch } from "@/lib/client/evolution";
+import { estimateEpochUsd, runEpoch } from "@/lib/client/evolution";
 import { getActive, getEvolutionLog, listHarnesses, saveProfile, setActive, type ActiveSet, type EvolutionLogEntry, type HarnessRecord } from "@/lib/client/store";
 import { downloadBlob } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
@@ -91,7 +91,7 @@ function Puzzle({ pieces, lang }: { pieces: Piece[]; lang: Lang }) {
             initial={{ opacity: 0, scale: 0.86, rotate: (i % 2 ? 1 : -1) * 6 }}
             animate={{ opacity: 1, scale: 1, rotate: 0 }}
             whileHover={filled ? { scale: 1.035 } : undefined}
-            transition={{ ...spring, delay: 0.08 + i * 0.06 }}
+            transition={{ ...fade, delay: 0.08 + i * 0.06 }}
             style={{ transformBox: "fill-box", transformOrigin: "center" }}
           >
             <title>{`${p.label[lang]}: ${p.value[lang]} (${lang === "zh" ? "依据" : "evidence"} ${p.evidence})`}</title>
@@ -127,23 +127,7 @@ export default function You() {
   const fallback = DEFAULT_RECIPE(lang);
   const live = prefillHitRate(sessions.slice(-8));
   const replay = replayHitRate(ui, sessions, fallback);
-  const [learning, setLearning] = useState(false);
-  const [learnLog, setLearnLog] = useState<string[]>([]);
   const pct = (v: number | null) => (v === null ? "–" : `${Math.round(v * 100)}%`);
-
-  async function learnNow() {
-    setLearning(true);
-    setLearnLog([]);
-    try {
-      track("evolve", { kind: "interface" });
-      await evolveInterface(settings, (l) => setLearnLog((x) => [...x, l]), undefined, episodes);
-      await refresh();
-    } catch (e) {
-      setLearnLog((x) => [...x, (e as Error).message]);
-    } finally {
-      setLearning(false);
-    }
-  }
 
   return (
     <div className="column stack-lg">
@@ -160,7 +144,7 @@ export default function You() {
             <span className="tabular">{Math.round(portraitCompleteness(pieces) * 100)}%</span>
           </div>
           <div className="meter">
-            <motion.i initial={{ width: 0 }} animate={{ width: `${portraitCompleteness(pieces) * 100}%` }} transition={{ ...spring, delay: 0.5 }} />
+            <motion.i initial={{ width: 0 }} animate={{ width: `${portraitCompleteness(pieces) * 100}%` }} transition={{ ...fade, delay: 0.5 }} />
           </div>
         </div>
         {profile.summary && (
@@ -201,20 +185,9 @@ export default function You() {
             <span className="badge">{ui.prefill.strategy === "hybrid" ? T("习惯 + 内容", "habit + content") : ui.prefill.strategy === "habit" ? T("按习惯", "habit") : T("按内容", "content")}</span>
           </div>
           <p className="hint">
-            {T(
-              "界面 Harness 与内容 Harness 用同一套递归自改进：把你最终的选择当作标签，回放历史评估每个预填策略，规划器改写预填规则、快捷方式和展示层级；若改动让命中率下降，会自动回滚。",
-              "The interface harness runs the same recursive self-improvement as content: your final choices are the labels, replay scores each prefill policy, the planner rewrites prefill rules, shortcuts and disclosure — and any change that lowers the hit rate is rolled back automatically.",
-            )}
+            {T("你最终的选择就是标签。每做完一期，它会回放过去的选择自动调优预填；命中率下降就自动回滚。", "Your final choices are the labels. After each episode it replays them to re-tune the prefill on its own, and rolls back if hits drop.")}
           </p>
           <span className="caption">{ui.changelog.at(-1)}</span>
-          <div className="row">
-            <Button size="small" onClick={learnNow} disabled={learning || sessions.length === 0}>
-              <Wand size={14} />
-              {learning ? T("学习中…", "Learning…") : T("现在学习", "Learn now")}
-            </Button>
-            {sessions.length === 0 && <span className="caption">{T("生成一期后即可开始", "Available after your first episode")}</span>}
-          </div>
-          {learnLog.length > 0 && <div className="log">{learnLog.join("\n")}</div>}
         </div>
       </section>
 
@@ -230,7 +203,8 @@ export default function You() {
 const MODES: Mode[] = ["lite", "medium", "heavy"];
 
 function Engine() {
-  const { T, lang, settings, episodes, refresh } = useApp();
+  const { T, lang, settings, episodes, refresh, go } = useApp();
+  const trial = settings.keys.llmProvider === "hosted";
   const [records, setRecords] = useState<HarnessRecord[]>([]);
   const [active, setActiveState] = useState<ActiveSet | null>(null);
   const [history, setHistory] = useState<EvolutionLogEntry[]>([]);
@@ -279,10 +253,7 @@ function Engine() {
       <div className="stack" style={{ gap: 6 }}>
         <h2 className="headline">{T("进化引擎", "Evolution engine")}</h2>
         <p className="hint">
-          {T(
-            "HarnessPro（arXiv 2610.26770）：诊断你的节目与反馈 → 按省钱 / 均衡 / 质量提出改进 → 在固定验证集上用固定测试评估 → 剔除被帕累托支配的版本，维护三档。界面 Harness 随后一起进化。",
-            "HarnessPro (arXiv 2610.26770): diagnose episodes and feedback → plan cost / balanced / quality patches → evaluate on a fixed validation set with fixed tests → keep the Pareto front as three modes. The interface harness evolves right after.",
-          )}
+          {T("诊断你的节目和反馈，提出改进，用固定测试在你的节目上评估，只保留质量与成本都不被比下去的版本。", "It diagnoses your episodes and feedback, proposes changes, grades them on your episodes with fixed tests, and keeps only versions nothing beats on both quality and cost.")}
         </p>
       </div>
 
@@ -309,25 +280,32 @@ function Engine() {
       </div>
 
       <div className="card stack">
+        {trial ? (
+          <div className="spread">
+            <span className="callout secondary">{T("免费试用的额度不够跑一轮进化。填上自己的钥匙，它就能自己调优。", "The free trial's allowance can't cover an epoch. Add your own keys and it can tune itself.")}</span>
+            <Button size="small" onClick={() => go("settings")}>{T("填上钥匙", "Add keys")}</Button>
+          </div>
+        ) : (
         <div className="spread">
           <span className="callout secondary">{T(`${episodes.length} 期可学习 · 预估 LLM ≤ $${est.toFixed(2)} · 不消耗 TTS`, `${episodes.length} episode${episodes.length === 1 ? "" : "s"} to learn from · est. LLM ≤ $${est.toFixed(2)} · no TTS`)}</span>
           {running ? (
             <Button onClick={() => abort.current?.abort()}>{T("停止", "Stop")}</Button>
           ) : (
-            <Button variant="primary" magnetic onClick={evolve}>
+            <Button variant="primary" onClick={evolve}>
               <Wand size={15} />
               {T("进化一轮", "Run an epoch")}
             </Button>
           )}
         </div>
-        <Disclosure title={T("选项", "Options")}>
+        )}
+        {settings.showAll && !trial && <Disclosure title={T("选项", "Options")}>
           <div className="stack" style={{ gap: 10 }}>
             <div className="spread"><span className="caption">{T("广度", "Breadth")}</span><Segmented value={breadth} onChange={setBreadth} options={[{ value: "quick", label: T("快速", "Quick") }, { value: "full", label: T("完整（论文）", "Full (paper)") }]} /></div>
             <div className="spread"><span className="caption">{T("验证集", "Validation set")}</span><Segmented value={valSize} onChange={setValSize} options={[1, 2, 3].map((n) => ({ value: n, label: `${n}` }))} /></div>
             <div className="spread"><span className="caption">{T("范围", "Scope")}</span><Segmented value={scope} onChange={setScope} options={[{ value: "script", label: T("脚本", "Script") }, { value: "full", label: T("全流程", "Full") }]} /></div>
             <div className="spread"><span className="caption">{T("选档权重", "Mode weights")}</span><Segmented value={spread ? "spread" : "paper"} onChange={(v) => setSpread(v === "spread")} options={[{ value: "paper", label: T("论文 1:2/1:1/2:1", "Paper 1:2/1:1/2:1") }, { value: "spread", label: T("拉开 1:10", "Spread 1:10") }]} /></div>
           </div>
-        </Disclosure>
+        </Disclosure>}
         {error && <div className="error">{error}</div>}
         {log.length > 0 && <div className="log">{log.join("\n")}</div>}
       </div>
@@ -395,7 +373,7 @@ function Pareto({ entry, labelOf }: { entry: EvolutionLogEntry; labelOf: (id: st
         const sel = p.selected?.[0];
         const nearRight = sx(p.cost) > W - 110;
         return (
-          <motion.g key={p.id} initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ ...spring, delay: 0.2 + i * 0.05 }} style={{ transformBox: "fill-box", transformOrigin: "center" }}>
+          <motion.g key={p.id} initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} transition={{ ...fade, delay: 0.2 + i * 0.05 }} style={{ transformBox: "fill-box", transformOrigin: "center" }}>
             <circle cx={sx(p.cost)} cy={sy(p.pass)} r={sel ? 7 : 4.5} fill={p.kind === "rejected" ? "var(--bg-elevated)" : sel ? `var(--${sel})` : "var(--label-4)"} stroke={p.kind === "rejected" ? "var(--label-4)" : "var(--bg-elevated)"} strokeWidth="2">
               <title>{`${labelOf(p.id)} — ${(p.pass * 100).toFixed(1)}%, $${p.cost.toFixed(3)}`}</title>
             </circle>

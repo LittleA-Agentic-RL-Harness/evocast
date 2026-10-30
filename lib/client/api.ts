@@ -64,6 +64,8 @@ export interface Trial {
   left?: number;
   perDay?: number;
   maxChars?: number;
+  /** Voice price per 1,000 characters the trial meter counts. */
+  voicePer1k?: number;
 }
 
 /** Whether this deployment offers the keyless free trial, and today's allowance left. */
