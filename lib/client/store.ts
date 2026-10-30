@@ -6,6 +6,7 @@ import { SEEDS } from "../harness/genome";
 import type { VoiceOverrides } from "../harness/styles";
 import { EMPTY_PROFILE, type ListenerProfile } from "../harness/profile";
 import { SEED_UI, type Recipe, type Session, type UIGenome } from "../harness/ui";
+import type { ContentGuard, Outcome, Spend } from "../harness/autotune";
 
 // Everything lives in the visitor's browser: IndexedDB for episodes/audio/harnesses,
 // localStorage for settings. Nothing is stored server-side.
@@ -104,6 +105,8 @@ export const saveProfile = (p: ListenerProfile) => idb.put("kv", "profile", p);
 export interface EvolutionLogEntry {
   at: string;
   epoch: number;
+  /** "micro" = a budgeted background run (one balanced plan for medium). */
+  kind?: "micro";
   summary: string;
   lines: string[];
   points: { id: string; pass: number; cost: number; kind: "parent" | "candidate" | "rejected"; selected?: Mode[] }[];
@@ -134,6 +137,8 @@ export interface Settings {
   sting?: boolean;
   /** Anonymous usage analytics (only where the deployment collects it). Undefined = on. */
   analytics?: boolean;
+  /** USD a week for background tuning on your own keys. Undefined = DEFAULT_TUNE_BUDGET; 0 = off. */
+  tuneBudget?: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -200,3 +205,47 @@ export interface UIGuard {
 export async function getUIGuard(): Promise<UIGuard | null> {
   return (await idb.get<UIGuard | null>("kv", "ui-guard")) ?? null;
 }
+
+// ------------------------------------------------------------------ content harness, learning with use
+
+/** Deleted episodes leave their outcome behind, so a deletion still counts as a signal. */
+export async function getTombstones(): Promise<Outcome[]> {
+  return (await idb.get<Outcome[]>("kv", "tombstones")) ?? [];
+}
+export async function addTombstone(o: Outcome) {
+  await idb.put("kv", "tombstones", [...(await getTombstones()), o].slice(-100));
+}
+
+export async function getContentGuards(): Promise<Partial<Record<Mode, ContentGuard>>> {
+  return (await idb.get<Partial<Record<Mode, ContentGuard>>>("kv", "content-guard")) ?? {};
+}
+export const saveContentGuards = (g: Partial<Record<Mode, ContentGuard>>) => idb.put("kv", "content-guard", g);
+
+/** When the last background micro-epoch started (its trigger counts what came after). */
+export async function getTuneState(): Promise<{ lastRunAt?: string }> {
+  return (await idb.get<{ lastRunAt?: string }>("kv", "tune-state")) ?? {};
+}
+export const saveTuneState = (s: { lastRunAt?: string }) => idb.put("kv", "tune-state", s);
+
+export async function getTuneSpend(): Promise<Spend[]> {
+  return (await idb.get<Spend[]>("kv", "tune-spend")) ?? [];
+}
+export async function addTuneSpend(usd: number) {
+  if (usd <= 0) return;
+  const recent = (await getTuneSpend()).filter((s) => Date.now() - Date.parse(s.at) < 30 * 24 * 3600 * 1000);
+  await idb.put("kv", "tune-spend", [...recent, { at: new Date().toISOString(), usd }]);
+}
+
+/** The one dismissible line on Home after the content harness changed on its own. */
+export interface TuneNotice {
+  kind: "tuned" | "reverted";
+  mode: Mode;
+  parentId: string;
+  childId: string;
+  text: Record<Lang, string>;
+  at: string;
+}
+export async function getTuneNotice(): Promise<TuneNotice | null> {
+  return (await idb.get<TuneNotice | null>("kv", "tune-notice")) ?? null;
+}
+export const saveTuneNotice = (n: TuneNotice | null) => idb.put("kv", "tune-notice", n);

@@ -9,7 +9,7 @@ import type { Lang, Mode, PersonaId, StyleId } from "@/lib/types";
 import { PERSONAS, PERSONA_IDS } from "@/lib/harness/personas";
 import { STYLES, STYLE_IDS, resolveVoices } from "@/lib/harness/styles";
 import { LENSES } from "@/lib/harness/lenses";
-import { blend, changedFields, DEFAULT_RECIPE, habitRecipe, type Recipe } from "@/lib/harness/ui";
+import { blend, changedFields, DEFAULT_RECIPE, HABIT_CONFIDENT, habitConfidence, habitRecipe, type Recipe } from "@/lib/harness/ui";
 import { buildPortrait, portraitText } from "@/lib/harness/portrait";
 import { LLM_PRICES, ttsUsd } from "@/lib/harness/cost";
 import { estimateTokens } from "@/lib/ingest/clean";
@@ -20,6 +20,7 @@ import { ApiError, getTrial, keyHeaders, postJSON, type Trial } from "@/lib/clie
 import { effectiveTtsModel, generateEpisodes, type Progress } from "@/lib/client/pipeline";
 import { addSession, getActive, getHarness, newId, saveProfile, type Settings } from "@/lib/client/store";
 import { autoTunePrefill, checkInterfaceGuard } from "@/lib/client/evolution";
+import { maybeAutoTune } from "@/lib/client/autotune";
 import type { Harness } from "@/lib/harness/genome";
 
 type Via = "file" | "link" | "paste";
@@ -82,7 +83,7 @@ const STAGES: { key: string; zh: string; en: string }[] = [
 ];
 
 export default function Home() {
-  const { T, lang, settings, update, sessions, episodes, ui, profile, surfaces, refresh, play, go } = useApp();
+  const { T, lang, settings, update, sessions, episodes, ui, profile, surfaces, refresh, play, go, tuning, dismissTuning, undoTuning } = useApp();
   const [source, setSource] = useState<Source | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +118,8 @@ export default function Home() {
     setPrefill({ habit, content: null, shown: habit });
     setReason(null);
     if (ui.prefill.strategy === "habit") return;
+    // Habit alone has been getting these choices right: the model call would add nothing.
+    if ((habitConfidence(sessions, ui.prefill.halfLife, base) ?? 0) >= HABIT_CONFIDENT) return;
     setThinking(true);
     try {
       const portrait = portraitText(buildPortrait(episodes, sessions, profile), profile);
@@ -271,6 +274,8 @@ export default function Home() {
         go("listen");
         await play(eps[0], true);
       }
+      // Quietly, while they listen: a small budgeted tuning step once there's enough new evidence.
+      void maybeAutoTune(settings).then((r) => r && refresh());
     } catch (e) {
       if (ctrl.signal.aborted) track("generate_cancel", { stage, ms: Date.now() - t0 });
       else track("generate_fail", { stage, m: (e as Error).message.slice(0, 120), ms: Date.now() - t0 });
@@ -296,6 +301,22 @@ export default function Home() {
       <div className="stack" style={{ paddingTop: 8 }}>
         <h1 className="display">{g.hi}</h1>
         <p className="lede">{g.sub}</p>
+        {tuning && !source && (
+          <div className="hint row" style={{ gap: 4 }} data-track="tuning_line">
+            <span>{tuning.text[lang]}</span>
+            {tuning.kind === "tuned" && (
+              <>
+                <span aria-hidden>·</span>
+                <button className="btn small plain" style={{ padding: "0 4px" }} data-track="tuning_undo" onClick={undoTuning}>
+                  {T("撤销", "Undo")}
+                </button>
+              </>
+            )}
+            <button className="icon-btn" style={{ marginLeft: "auto" }} data-track="tuning_dismiss" onClick={dismissTuning} aria-label={T("知道了", "Dismiss")}>
+              <Xmark size={13} />
+            </button>
+          </div>
+        )}
       </div>
 
       {!source ? (

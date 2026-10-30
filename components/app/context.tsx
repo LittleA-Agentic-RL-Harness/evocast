@@ -6,7 +6,9 @@ import { visibleSurfaces, type Session, type Surface, type UIGenome } from "@/li
 import { SEED_UI } from "@/lib/harness/ui";
 import { EMPTY_PROFILE, type ListenerProfile } from "@/lib/harness/profile";
 import { track } from "@/lib/client/track";
-import { DEFAULT_SETTINGS, getAudio, getEpisode, getProfile, getSessions, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, type Settings } from "@/lib/client/store";
+import { DEFAULT_SETTINGS, getAudio, getEpisode, getProfile, getSessions, getTuneNotice, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, saveTuneNotice, type Settings, type TuneNotice } from "@/lib/client/store";
+import { checkContentGuard } from "@/lib/client/evolution";
+import { undoTuning } from "@/lib/client/autotune";
 
 export type View = "home" | "listen" | "you" | "settings";
 
@@ -31,6 +33,10 @@ interface Ctx {
   sessions: Session[];
   ui: UIGenome;
   profile: ListenerProfile;
+  /** The one quiet line on Home after the content harness changed on its own. */
+  tuning: TuneNotice | null;
+  dismissTuning: () => Promise<void>;
+  undoTuning: () => Promise<void>;
   refresh: () => Promise<void>;
   surfaces: Record<Surface, boolean>;
   player: PlayerState;
@@ -39,7 +45,8 @@ interface Ctx {
   seek: (t: number) => void;
   setRate: (r: number) => void;
   setSheet: (open: boolean) => void;
-  stop: () => void;
+  /** Resolves once the listening so far is saved. */
+  stop: () => Promise<void>;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -58,6 +65,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [ui, setUI] = useState<UIGenome>(SEED_UI);
   const [profile, setProfile] = useState<ListenerProfile>(EMPTY_PROFILE);
+  const [tuning, setTuning] = useState<TuneNotice | null>(null);
   const [player, setPlayer] = useState<PlayerState>({ episode: null, playing: false, time: 0, duration: 0, rate: 1, sheet: false });
   // Listening writes are queued; they're tagged with the episode playing when queued (stop() clears it right after).
   const episodeRef = useRef<Episode | null>(null);
@@ -82,13 +90,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  /** Judge a recent content change on what was really heard, rated and deleted; then show what it decided. */
+  const syncTuning = useCallback(async () => {
+    await checkContentGuard().catch(() => false);
+    setTuning(await getTuneNotice());
+  }, []);
+
   const refresh = useCallback(async () => {
+    await syncTuning();
     const [e, s, g, p] = await Promise.all([listEpisodes(), getSessions(), getUIGenome(), getProfile()]);
     setEpisodes(e);
     setSessions(s);
     setUI(g);
     setProfile(p);
+  }, [syncTuning]);
+
+  const dismissTuning = useCallback(async () => {
+    await saveTuneNotice(null);
+    setTuning(null);
   }, []);
+  const undo = useCallback(async () => {
+    if (tuning) await undoTuning(tuning);
+    setTuning(null);
+  }, [tuning]);
 
   useEffect(() => {
     setSettings(loadSettings());
@@ -148,6 +172,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await saveEpisode(next);
     setEpisodes((all) => all.map((x) => (x.id === next.id ? next : x)));
     setPlayer((p) => (p.episode?.id === next.id ? { ...p, episode: next } : p));
+    await syncTuning();
   };
 
   const play = useCallback(
@@ -199,8 +224,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setSheet = useCallback((open: boolean) => setPlayer((p) => ({ ...p, sheet: open })), []);
   const stop = useCallback(() => {
     audioRef.current?.pause();
-    persistListening();
+    const saved = persistListening();
     setPlayer((p) => ({ ...p, episode: null, playing: false, sheet: false }));
+    return saved;
   }, [persistListening]);
 
   // Media Session: lock screen / hardware keys / Touch Bar controls.
@@ -218,7 +244,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lang = settings.uiLang;
   const T = useCallback((zh: string, en: string) => (lang === "zh" ? zh : en), [lang]);
 
-  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, refresh, surfaces, player, play, toggle, seek, setRate, setSheet, stop };
+  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, setRate, setSheet, stop };
 
   return (
     <AppCtx.Provider value={value}>
