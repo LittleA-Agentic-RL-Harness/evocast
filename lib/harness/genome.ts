@@ -37,6 +37,12 @@ export const HarnessSchema = z.object({
     revise: z.boolean(),
     maxRevisions: z.number().int().min(0).max(2),
     ttsModel: z.enum(TTS_MODELS),
+    /**
+     * Which model writes the chapters and which one checks them, relative to the reading model
+     * (lib/llm/route.ts). Absent on harnesses from before v0.5: everything on the reading model.
+     */
+    writeTier: z.enum(["top", "mid"]).optional(),
+    checkTier: z.enum(["top", "mid", "small"]).optional(),
   }),
 });
 
@@ -77,7 +83,7 @@ export const SEED_MEDIUM: Harness = {
   parentId: null,
   label: "Seed · medium",
   createdAt: "2026-10-28T00:00:00.000Z",
-  changelog: ["Seed harness h0 (balanced)."],
+  changelog: ["Seed harness h0 (balanced).", "v0.5: chapters written by Claude Sonnet 5.5, checks by Claude Haiku 5.5; reading stays on the chosen model."],
   brief: { rules: SEED_BRIEF_RULES, maxFindings: 6, numTests: 6 },
   script: {
     rules: SEED_SCRIPT_RULES,
@@ -95,6 +101,8 @@ export const SEED_MEDIUM: Harness = {
     revise: false,
     maxRevisions: 0,
     ttsModel: "eleven_v4",
+    writeTier: "mid",
+    checkTier: "small",
   },
 };
 
@@ -111,8 +119,8 @@ export const SEED_HEAVY: Harness = {
   ...SEED_MEDIUM,
   id: "h0-heavy",
   label: "Seed · heavy",
-  changelog: ["Seed harness h0 (quality-focused): high effort, grade + one revision pass."],
-  pipeline: { ...SEED_MEDIUM.pipeline, briefEffort: "high", scriptEffort: "high", grade: true, revise: true, maxRevisions: 1 },
+  changelog: ["Seed harness h0 (quality-focused): high effort, grade + one revision pass.", "v0.5: chapters stay on the reading model, checks by Claude Sonnet 5.5."],
+  pipeline: { ...SEED_MEDIUM.pipeline, briefEffort: "high", scriptEffort: "high", grade: true, revise: true, maxRevisions: 1, writeTier: "top", checkTier: "mid" },
 };
 
 export const SEEDS: Record<Mode, Harness> = { lite: SEED_LITE, medium: SEED_MEDIUM, heavy: SEED_HEAVY };
@@ -139,6 +147,8 @@ export const EDITABLE_PATHS = [
   "pipeline.grade",
   "pipeline.revise",
   "pipeline.maxRevisions",
+  "pipeline.writeTier",
+  "pipeline.checkTier",
 ] as const;
 export type EditablePath = (typeof EDITABLE_PATHS)[number];
 const LIST_PATHS = new Set<EditablePath>(["brief.rules", "script.rules", "script.structure"]);

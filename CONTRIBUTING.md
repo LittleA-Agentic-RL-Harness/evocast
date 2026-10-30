@@ -10,6 +10,8 @@ npm run dev          # http://localhost:3000 — without keys the welcome screen
 npm test             # unit tests (node:test via tsx)
 npm run typecheck
 npm run build
+npm run e2e          # after a build: browser tests in demo mode (npx playwright install chromium webkit firefox once)
+AUDIT=1 npm run e2e  # every screen at every size on every engine; AUDIT_DIR=path keeps the screenshots
 npm run check:voices # do the default voices still speak? needs a Gateway token or an ElevenLabs key; skips without
 ```
 
@@ -34,7 +36,7 @@ Append `?still` to any URL to skip the remaining fades and turn analytics off (h
 - **Every harness change must stay measurable.** New evolvable knobs go through the whitelisted patch editor (`EDITABLE_PATHS` / `applyUIPatch`) with schema bounds and a unit test.
 - **Keep keys client-side.** Never log, persist or forward keys anywhere except the provider being called.
 - **Design**: calm by default. Nothing moves: no new animation or hover effects; things that appear use the one short `fade` in `components/ui/kit.tsx`. Prefer fewer controls. Use the tokens in `app/globals.css` (Fibonacci spacing, √φ type scale, system colours) and respect `prefers-reduced-transparency`.
-- **Tests**: add or update a test in `tests/` for logic changes. `npm test && npm run typecheck && npm run build` must pass.
+- **Tests**: add or update a test in `tests/` for logic changes. `npm test && npm run typecheck && npm run build && npm run e2e` must pass; for layout changes, run `AUDIT=1 npm run e2e` too.
 - **Commits/PRs**: small, descriptive; explain the "why". Link an issue when there is one.
 
 ## Good first contributions

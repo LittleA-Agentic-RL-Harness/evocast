@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Lang, Mode, PersonaId, StyleId } from "../types";
+import { isLang, LANGS } from "./langs";
 import { PERSONA_IDS } from "./personas";
 import { STYLE_IDS } from "./styles";
 import { LENSES } from "./lenses";
@@ -43,7 +44,7 @@ const LensEnum = z.enum(LENSES.map((l) => l.id) as [string, ...string[]]);
 export const RecipeSchema = z.object({
   persona: PersonaEnum,
   style: StyleEnum,
-  langs: z.array(z.enum(["zh", "en"])).min(1).max(2),
+  langs: z.array(z.enum(LANGS as [Lang, ...Lang[]])).min(1).max(2),
   minutes: z.number().int().min(2).max(30),
   lenses: z.array(LensEnum).max(3),
   mode: z.enum(["lite", "medium", "heavy"]),
@@ -64,7 +65,7 @@ export type RecipeWire = z.infer<typeof RecipeWireSchema>;
 
 export function coerceRecipe(raw: RecipeWire, fallback: Recipe): Recipe {
   const pick = <T extends string>(v: string, allowed: readonly T[], d: T): T => ((allowed as readonly string[]).includes(v) ? (v as T) : d);
-  const langs = [...new Set(raw.langs.filter((l): l is Lang => l === "zh" || l === "en"))].slice(0, 2);
+  const langs = [...new Set(raw.langs.filter(isLang))].slice(0, 2);
   return {
     persona: pick(raw.persona, PERSONA_IDS, fallback.persona),
     style: pick(raw.style, STYLE_IDS, fallback.style),

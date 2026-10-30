@@ -1,6 +1,6 @@
 "use client";
 
-import type { ClientKeys, Episode, Lang, Mode } from "../types";
+import type { Ask, ClientKeys, Episode, Lang, Mode, UiLang } from "../types";
 import type { Harness } from "../harness/genome";
 import { SEEDS } from "../harness/genome";
 import type { VoiceOverrides } from "../harness/styles";
@@ -15,17 +15,24 @@ const DB_NAME = "evocast";
 const STORES = ["episodes", "audio", "sources", "harnesses", "kv"] as const;
 type StoreName = (typeof STORES)[number];
 
-let dbPromise: Promise<IDBDatabase> | null = null;
+let dbPromise: Promise<IDBDatabase | null> | null = null;
+/** Where everything lives when the browser offers no IndexedDB (storage blocked, some in-app browsers): this visit only. */
+const memory = new Map<string, unknown>();
 
-function db(): Promise<IDBDatabase> {
+function db(): Promise<IDBDatabase | null> {
   if (!dbPromise) {
-    dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, 1);
-      req.onupgradeneeded = () => {
-        for (const s of STORES) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+    dbPromise = new Promise<IDBDatabase | null>((resolve) => {
+      try {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          for (const s of STORES) if (!req.result.objectStoreNames.contains(s)) req.result.createObjectStore(s);
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
     });
   }
   return dbPromise;
@@ -33,20 +40,67 @@ function db(): Promise<IDBDatabase> {
 
 async function tx<T>(store: StoreName, mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   const d = await db();
+  if (!d) throw new Error("no IndexedDB");
   return new Promise((resolve, reject) => {
     const t = d.transaction(store, mode);
     const r = fn(t.objectStore(store));
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
+    // A full disk or an aborted write arrives on the transaction, not the request.
+    t.onabort = () => reject(t.error ?? new Error("IndexedDB transaction aborted"));
   });
 }
 
+// Safari won't store Blobs in IndexedDB in a private window ("Error preparing Blob/File data"):
+// there a record's Blobs are kept as bytes, marked, and turned back into Blobs on the way out.
+type Packed = { __blob: ArrayBuffer; type: string };
+const PACKED = "__evocastPacked";
+const plain = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !(v instanceof Blob) && !(v instanceof ArrayBuffer) && !ArrayBuffer.isView(v);
+const hasBlob = (v: unknown): boolean => v instanceof Blob || (Array.isArray(v) ? v.some(hasBlob) : plain(v) && Object.values(v).some(hasBlob));
+async function pack(v: unknown): Promise<unknown> {
+  if (v instanceof Blob) return { __blob: await v.arrayBuffer(), type: v.type } satisfies Packed;
+  if (Array.isArray(v)) return Promise.all(v.map(pack));
+  if (plain(v)) return Object.fromEntries(await Promise.all(Object.entries(v).map(async ([k, x]) => [k, await pack(x)])));
+  return v;
+}
+function unpack(v: unknown): unknown {
+  if (plain(v) && "__blob" in v) return new Blob([(v as Packed).__blob], { type: (v as Packed).type });
+  if (Array.isArray(v)) return v.map(unpack);
+  if (plain(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, unpack(x)]));
+  return v;
+}
+const revive = <T>(v: unknown): T => (plain(v) && PACKED in v ? (unpack(v[PACKED]) as T) : (v as T));
+
+const mem = (store: StoreName, key: string) => `${store}/${key}`;
+
 export const idb = {
-  get: <T>(store: StoreName, key: string) => tx<T | undefined>(store, "readonly", (s) => s.get(key) as IDBRequest<T | undefined>),
-  put: (store: StoreName, key: string, value: unknown) => tx(store, "readwrite", (s) => s.put(value, key)),
-  del: (store: StoreName, key: string) => tx(store, "readwrite", (s) => s.delete(key)),
-  all: <T>(store: StoreName) => tx<T[]>(store, "readonly", (s) => s.getAll() as IDBRequest<T[]>),
-  clear: (store: StoreName) => tx(store, "readwrite", (s) => s.clear()),
+  get: async <T>(store: StoreName, key: string): Promise<T | undefined> => {
+    if (!(await db())) return memory.get(mem(store, key)) as T | undefined;
+    return revive<T | undefined>(await tx(store, "readonly", (s) => s.get(key)));
+  },
+  put: async (store: StoreName, key: string, value: unknown) => {
+    if (!(await db())) return void memory.set(mem(store, key), value);
+    try {
+      await tx(store, "readwrite", (s) => s.put(value, key));
+    } catch (e) {
+      if (!hasBlob(value)) throw e;
+      // Pack first: a transaction can't wait for the Blob to be read.
+      const packed = { [PACKED]: await pack(value) };
+      await tx(store, "readwrite", (s) => s.put(packed, key));
+    }
+  },
+  del: async (store: StoreName, key: string) => {
+    if (!(await db())) return void memory.delete(mem(store, key));
+    await tx(store, "readwrite", (s) => s.delete(key));
+  },
+  all: async <T>(store: StoreName): Promise<T[]> => {
+    if (!(await db())) return [...memory.entries()].filter(([k]) => k.startsWith(`${store}/`)).map(([, v]) => v as T);
+    return (await tx(store, "readonly", (s) => s.getAll())).map((v) => revive<T>(v));
+  },
+  clear: async (store: StoreName) => {
+    if (!(await db())) return void [...memory.keys()].filter((k) => k.startsWith(`${store}/`)).forEach((k) => memory.delete(k));
+    await tx(store, "readwrite", (s) => s.clear());
+  },
 };
 
 // ------------------------------------------------------------------ episodes
@@ -55,7 +109,21 @@ export async function listEpisodes(): Promise<Episode[]> {
   const all = await idb.all<Episode>("episodes");
   return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
-export const saveEpisode = (e: Episode) => idb.put("episodes", e.id, e);
+/** Questions asked while an episode was still being made: they join it the moment it is saved. */
+const pendingAsks = new Map<string, Ask[]>();
+
+export function saveEpisode(e: Episode) {
+  const waiting = pendingAsks.get(e.id);
+  pendingAsks.delete(e.id);
+  return idb.put("episodes", e.id, waiting ? { ...e, asks: [...(e.asks ?? []), ...waiting] } : e);
+}
+
+/** Keep a raised hand with its episode (or until the episode is saved). */
+export async function addAsk(id: string, ask: Ask) {
+  const e = await getEpisode(id);
+  if (!e) pendingAsks.set(id, [...(pendingAsks.get(id) ?? []), ask]);
+  else await idb.put("episodes", id, { ...e, asks: [...(e.asks ?? []), ask] });
+}
 export const getEpisode = (id: string) => idb.get<Episode>("episodes", id);
 export const getAudio = (id: string) => idb.get<Blob>("audio", id);
 export const saveAudio = (id: string, blob: Blob) => idb.put("audio", id, blob);
@@ -120,7 +188,7 @@ export const saveEvolutionLog = (log: EvolutionLogEntry[]) => idb.put("kv", "evo
 
 export interface Settings {
   keys: ClientKeys;
-  uiLang: Lang;
+  uiLang: UiLang;
   /** Per-mode TTS model override; empty = use the harness's model. */
   ttsOverride: Partial<Record<Mode, string>>;
   ttsMultiplier: number;
@@ -244,7 +312,7 @@ export interface TuneNotice {
   mode: Mode;
   parentId: string;
   childId: string;
-  text: Record<Lang, string>;
+  text: Record<UiLang, string>;
   at: string;
 }
 export async function getTuneNotice(): Promise<TuneNotice | null> {

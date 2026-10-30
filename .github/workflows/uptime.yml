@@ -1,0 +1,24 @@
+name: Uptime
+
+# Every 30 minutes: the site answers and the free trial is open. A failed run is the alert
+# (GitHub emails the repository's watchers), so nothing else needs to be set up.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Home page
+        run: curl -fsS --max-time 20 -o /dev/null -w "home %{http_code} in %{time_total}s\n" https://evocast.vercel.app/
+      - name: Free trial
+        run: |
+          body=$(curl -fsS --max-time 20 https://evocast.vercel.app/api/trial)
+          echo "trial $body"
+          echo "$body" | grep -q '"available":true'

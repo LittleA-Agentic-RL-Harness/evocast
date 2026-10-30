@@ -18,26 +18,40 @@ export interface LLMConfig {
   price?: { input: number; output: number };
   /** Free-trial spend control: checked before and recorded after every call. */
   meter?: Meter;
+  /** false: every stage uses `model` (Settings → Model → one model for everything). See lib/llm/route.ts. */
+  route?: boolean;
 }
 
 export { LLMError } from "./error";
 
 export interface JSONCall<T> {
   system: string;
+  /**
+   * Stable parts of the request that several calls share (the brief, the plan), sent before `user`
+   * and cached: a later call with the same system and prefix reads them at a tenth of the price or less.
+   */
+  prefix?: string[];
   user: string;
   schema: z.ZodType<T>;
   effort: Effort;
   maxTokens?: number;
   /** Deterministic stand-in used by the keyless demo provider. */
   mock: () => T;
-  /** Characters of output so far, as the model writes (streaming providers only). */
-  onText?: (chars: number) => void;
+  /**
+   * Latency first (the cold open, an answer, the prefill): no extended thinking on models that let it
+   * be turned off (Claude Haiku 5.5 at this effort), so the first words come sooner.
+   */
+  quick?: boolean;
+  /** Characters of output so far and the text itself, as the model writes (streaming providers only). */
+  onText?: (chars: number, text: string) => void;
 }
 
 const ZERO = (model: string): Usage => ({ model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, usd: 0 });
 
 // Models that accept `fallbacks: "default"` (server-side refusal fallback) on the first-party API.
 const FALLBACK_MODELS = new Set(["claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"]);
+// Claude Haiku 5.5 accepts thinking off at effort high or below; Opus 5.5 and Sonnet 5.5 refuse it.
+const canSkipThinking = (model: string, effort: Effort) => /claude-haiku-5[-.]5/.test(model) && effort !== "high";
 // Effort is supported on the current Claude generation; older models reject it.
 const supportsEffort = (model: string) => /claude-(opus|sonnet|haiku|fable|mythos)-(5|4-[5-8])/.test(model) && !/haiku-4-5|sonnet-4-5/.test(model);
 
@@ -63,19 +77,31 @@ async function anthropicJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ da
   const useFallback = FALLBACK_MODELS.has(cfg.model) && !cfg.baseUrl;
 
   const once = async (): Promise<{ data: T; usage: Usage }> => {
+    // Each prefix block ends at a cache breakpoint (up to four allowed), so calls sharing only the first blocks still hit.
+    const prefix = (call.prefix ?? []).filter(Boolean);
     const stream = client.beta.messages.stream({
       model: cfg.model,
       max_tokens: call.maxTokens ?? 32000,
       system: call.system,
-      messages: [{ role: "user", content: call.user }],
+      messages: [
+        {
+          role: "user",
+          content: prefix.length ? [...prefix.map((text, i) => ({ type: "text" as const, text, ...(i >= prefix.length - 4 ? { cache_control: { type: "ephemeral" as const } } : {}) })), { type: "text" as const, text: call.user }] : call.user,
+        },
+      ],
       output_config: {
         ...(supportsEffort(cfg.model) ? { effort: call.effort } : {}),
         format: betaZodOutputFormat(call.schema),
       },
+      ...(call.quick && canSkipThinking(cfg.model, call.effort) ? { thinking: { type: "disabled" as const } } : {}),
       ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     });
-    let written = 0;
-    if (call.onText) stream.on("text", (delta) => call.onText?.((written += delta.length)));
+    let soFar = "";
+    if (call.onText)
+      stream.on("text", (delta) => {
+        soFar += delta;
+        call.onText?.(soFar.length, soFar);
+      });
     const msg = await stream.finalMessage();
 
     if (msg.stop_reason === "refusal") {
@@ -86,10 +112,11 @@ async function anthropicJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ da
 
     const u = msg.usage;
     const cached = u.cache_read_input_tokens ?? 0;
-    const input = u.input_tokens + cached + (u.cache_creation_input_tokens ?? 0);
+    const written = u.cache_creation_input_tokens ?? 0;
+    const input = u.input_tokens + cached + written;
     return {
       data: msg.parsed_output as T,
-      usage: { model: msg.model, inputTokens: input, outputTokens: u.output_tokens, cachedTokens: cached, usd: llmUsd(cfg.model, input, u.output_tokens, cached, cfg.price) },
+      usage: { model: msg.model, inputTokens: input, outputTokens: u.output_tokens, cachedTokens: cached, usd: llmUsd(cfg.model, input, u.output_tokens, cached, cfg.price, written) },
     };
   };
 
@@ -119,7 +146,7 @@ async function openaiJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ data:
   const schemaText = JSON.stringify(z.toJSONSchema(call.schema));
   const messages: { role: string; content: string }[] = [
     { role: "system", content: `${call.system}\n\nRespond with one JSON object only, matching this JSON Schema:\n${schemaText}` },
-    { role: "user", content: call.user },
+    { role: "user", content: [...(call.prefix ?? []), call.user].filter(Boolean).join("\n\n") },
   ];
   let inTok = 0;
   let outTok = 0;

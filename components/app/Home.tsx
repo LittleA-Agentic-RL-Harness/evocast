@@ -12,19 +12,20 @@ import { LENSES } from "@/lib/harness/lenses";
 import { blend, changedFields, DEFAULT_RECIPE, HABIT_CONFIDENT, habitConfidence, habitRecipe, MINUTES, snapMinutes, type Recipe } from "@/lib/harness/ui";
 import { chapterMinutes } from "@/lib/harness/chapters";
 import { buildPortrait, portraitText } from "@/lib/harness/portrait";
-import { LLM_PRICES, ttsUsd } from "@/lib/harness/cost";
+import { LLM_PRICES, priceId, ttsUsd } from "@/lib/harness/cost";
+import { atTier } from "@/lib/llm/route";
+import { charsPerMinute, COMMON, detectLang, LANG_INFO, LANGS } from "@/lib/harness/langs";
 import { estimateTokens } from "@/lib/ingest/clean";
 import { ACCEPT, combine, htmlToText, type Source, type SourceDoc } from "@/lib/ingest/extract";
 import { parseLinks, pickedFromDrop, publicUrl, readLinks, readPicked, type LinkError, type Picked } from "@/lib/client/files";
 import { track } from "@/lib/client/track";
-import { ApiError, getJSON, getTrial, keyHeaders, keyMessage, postJSON, type Trial } from "@/lib/client/api";
+import { isNetworkError, ApiError, getJSON, getTrial, keyHeaders, keyMessage, postJSON, type Trial } from "@/lib/client/api";
 import { topicOf } from "@/lib/harness/prefill";
 import { isFreeTier, previewIn } from "@/lib/tts/voices";
 import type { SharedVoice, Topic } from "@/lib/tts/elevenlabs";
 import { effectiveTtsModel, generateEpisodes, seatVoices, voiceLine, type Progress } from "@/lib/client/pipeline";
-import { LiveAudio } from "@/lib/client/live";
 import { extractFigures, type Figure } from "@/lib/client/figures";
-import { addSession, getActive, getHarness, newId, saveProfile, type Settings } from "@/lib/client/store";
+import { addSession, getActive, getEpisode, getHarness, newId, saveEpisode, saveProfile, type Settings } from "@/lib/client/store";
 import { autoTunePrefill, checkInterfaceGuard } from "@/lib/client/evolution";
 import { maybeAutoTune } from "@/lib/client/autotune";
 import type { Harness } from "@/lib/harness/genome";
@@ -83,7 +84,7 @@ const LENGTHS: Record<number, [string, string]> = {
 };
 
 export default function Home() {
-  const { T, lang, settings, update, sessions, episodes, ui, profile, refresh, play, go, tuning, dismissTuning, undoTuning, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, stop, player, setSheet } = useApp();
+  const { T, lang, settings, update, sessions, episodes, ui, profile, refresh, play, go, tuning, dismissTuning, undoTuning, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, liveWaited, stop, player, setSheet } = useApp();
   const [source, setSource] = useState<Source | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -229,18 +230,28 @@ export default function Home() {
       const tts = effectiveTtsModel(harness, recipe.mode, settings);
       const model = settings.keys.llmProvider === "mock" ? "mock" : onTrial ? "claude-opus-5-5" : settings.keys.llmModel || "claude-opus-5-5";
       const price = onTrial ? LLM_PRICES[model] : (settings.llmPrice ?? LLM_PRICES[model]);
+      // Writing and checking may run on lighter models (lib/llm/route.ts), at their own prices.
+      const cfg = { provider: settings.keys.llmProvider === "openai" ? ("openai" as const) : ("anthropic" as const), model, route: settings.keys.route, ...(settings.keys.llmBaseUrl && !onTrial ? { baseUrl: settings.keys.llmBaseUrl } : {}) };
+      const at = (tier: Parameters<typeof atTier>[1]): { input: number; output: number; cacheRead?: number } | undefined => {
+        const m = atTier(cfg, tier).model;
+        return m === model ? price : LLM_PRICES[priceId(m)];
+      };
+      const wp = at(harness.pipeline.writeTier);
+      const cp = at(harness.pipeline.checkTier);
       const read = onTrial ? source.text.slice(0, trial?.maxChars ?? Infinity) : source.text;
       const n = chapterMinutes(minutes).length;
       const graded = harness.pipeline.grade || harness.pipeline.revise;
-      // Calibrated on real trial runs: a chapter call reads ~10k tokens (system, brief, plan, figures), Chinese runs ~1.5 tokens a character.
+      // Calibrated on real trial runs: a chapter call reads ~10k tokens (system, brief, plan, figures), ~8k
+      // of it cached after the first call; Chinese runs ~1.5 tokens a character.
       let llm = price ? ((estimateTokens(read) + 4000) * price.input + 7000 * price.output) / 1e6 : 0;
       let chars = 0;
       for (const l of recipe.langs) {
-        const c = harness.script.charsPerMinute[l] * minutes;
+        const c = charsPerMinute(harness, l) * minutes;
         chars += c;
         const out = (l === "zh" ? c * 1.5 : c / 3.6) * 1.3;
-        const write = n * 10_000 * (price?.input ?? 0) + out * (price?.output ?? 0);
-        const grade = graded ? (out + 5000) * (price?.input ?? 0) + 1500 * (price?.output ?? 0) : 0;
+        const input = (wp?.input ?? 0) * (n * 2000 + 8000 * 1.25 + (n - 1) * 8000 * (wp?.cacheRead ?? 0.1));
+        const write = input + out * (wp?.output ?? 0);
+        const grade = graded ? (out + 5000) * (cp?.input ?? 0) + 1500 * (cp?.output ?? 0) : 0;
         llm += (write * (harness.pipeline.revise ? 2.2 : 1) + grade) / 1e6;
       }
       const voice = onTrial && trial?.voicePer1k != null ? (chars * trial.voicePer1k) / 1000 : ttsUsd(tts, chars, onTrial ? 1 : settings.ttsMultiplier, onTrial);
@@ -267,6 +278,7 @@ export default function Home() {
     const t0 = Date.now();
     let stage = "brief";
     let heard = false;
+    const hold = holdOn();
     setRun({ started: t0, progress: null, error: null, draft: null });
     track("generate_start", {
       persona: recipe.persona,
@@ -315,18 +327,19 @@ export default function Home() {
           if (d.episode.lang === recipe.langs[0]) setRun((r) => r && { ...r, draft: d });
           liveDraft(d);
         },
-        // Where the browser can play a growing stream, listening starts after the first chapter.
-        ...(LiveAudio.supported()
-          ? {
-              onAudio: (bytes: Uint8Array, seconds: number, d: Parameters<typeof liveAudio>[2]) => {
-                heard = true;
-                liveAudio(bytes, seconds, d);
-              },
-            }
-          : {}),
+        // Listening starts within seconds: streamed where the browser can, else from a growing file.
+        onAudio: (bytes: Uint8Array, seconds: number, d: Parameters<typeof liveAudio>[2]) => {
+          heard = true;
+          liveAudio(bytes, seconds, d);
+        },
         onSaved: (e) => liveEnd(e),
       });
-      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard });
+      track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard, first_ms: eps[0]?.metrics.latencyMs.firstAudio ?? null, wait_ms: heard ? liveWaited() : null });
+      // How long the live episode stood still waiting for a chapter, kept with it.
+      if (heard && eps[0]) {
+        const cur = (await getEpisode(eps[0].id)) ?? eps[0];
+        await saveEpisode({ ...cur, metrics: { ...cur.metrics, latencyMs: { ...cur.metrics.latencyMs, stalled: liveWaited() } } });
+      }
       // Only finished episodes teach the prefill; cancelled or failed runs aren't choices.
       await addSession(session);
       if (profile.minutesBias[recipe.persona]) await saveProfile({ ...profile, minutesBias: { ...profile.minutesBias, [recipe.persona]: 0 } });
@@ -361,10 +374,13 @@ export default function Home() {
                 ? T("免费的 ElevenLabs 套餐不能通过 API 使用声音库声音，而你的账户里还没有能用的声音。在设置 → 声音里一键设计两位主播（所有套餐可用）。", "Free ElevenLabs plans can't use Voice Library voices through the API, and your account has no voice to use yet. Design both hosts in Settings → Voices (works on every plan).")
                 : code === "voice_not_found"
                   ? T("这期用到的声音已不可用，也没有找到替代。在设置 → 声音里换一个再试。", "A voice in this episode is no longer available and no replacement was found. Pick another in Settings → Voices and try again.")
-                  : keyMessage((e as Error).message, T);
+                  : !navigator.onLine || isNetworkError(e)
+                    ? T("网络断了一下。连上以后再点一次生成；同一份材料读过的部分不会重新付费。", "The connection dropped. Once you're back online, press Create again; what was already read isn't paid for twice.")
+                    : keyMessage((e as Error).message, T);
       setRun((r) => r && { ...r, progress: null, draft: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     } finally {
+      hold();
       cancel.current = null;
     }
   }
@@ -399,7 +415,7 @@ export default function Home() {
       {generating && run ? (
         <div className="stack-lg">
           <div className="card stack">
-            {listening && run.draft ? <LiveCard run={run} onOpen={() => setSheet(true)} /> : <Steps run={run} live={LiveAudio.supported()} />}
+            {listening && run.draft ? <LiveCard run={run} onOpen={() => setSheet(true)} /> : <Steps run={run} live />}
           </div>
           <div className="center">
             <Button variant="plain" data-track="cancel" onClick={() => cancel.current?.()}>
@@ -433,7 +449,7 @@ export default function Home() {
                 <Xmark size={16} />
               </button>
             </div>
-            <RecipeSentence recipe={recipe} setRecipe={setRecipe} settings={settings} update={update} affordable={affordable} topic={topicOf(source.text.slice(0, 6000))} />
+            <RecipeSentence recipe={recipe} setRecipe={setRecipe} settings={settings} update={update} affordable={affordable} topic={topicOf(source.text.slice(0, 6000))} written={detectLang(source.text)} />
             <AnimatePresence>
               {(thinking || reason) && (
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="reason" data-private>
@@ -603,9 +619,10 @@ function Token({ children, menu, k }: { children: ReactNode; menu: (close: () =>
   );
 }
 
-function RecipeSentence({ recipe, setRecipe, settings, update, affordable, topic }: { recipe: Recipe; setRecipe: (r: Recipe) => void; settings: Settings; update: (s: Settings) => void; affordable: (minutes: number) => boolean; topic: Topic }) {
+function RecipeSentence({ recipe, setRecipe, settings, update, affordable, topic, written }: { recipe: Recipe; setRecipe: (r: Recipe) => void; settings: Settings; update: (s: Settings) => void; affordable: (minutes: number) => boolean; topic: Topic; written: Lang }) {
   const { T, lang } = useApp();
-  const langLabel = (ls: Lang[]) => (ls.length > 1 ? T("中英双语", "bilingual") : ls[0] === "zh" ? T("中文", "Chinese") : T("英文", "English"));
+  const [more, setMore] = useState(false);
+  const langLabel = (ls: Lang[]) => ls.map((l) => LANG_INFO[l].name[lang]).join(" + ");
 
   const persona = (
     <Token k={recipe.persona} menu={(close) => (
@@ -630,12 +647,22 @@ function RecipeSentence({ recipe, setRecipe, settings, update, affordable, topic
       {T(`${recipe.minutes} 分钟`, `${recipe.minutes}-minute`)}
     </Token>
   );
+  // The common languages, then the rest on request; and both yours and the source's when they differ.
+  const both: Lang[] | null = written !== lang ? [lang, written] : null;
+  const shown: Lang[][] = [...(both ? [both] : []), ...(more ? LANGS : COMMON).map((l) => [l])];
   const language = (
     <Token k={recipe.langs.join()} menu={(close) => (
       <>
-        {([["zh"], ["en"], ["zh", "en"]] as Lang[][]).map((ls) => (
-          <MenuItem key={ls.join()} title={langLabel(ls)} subtitle={ls.length > 1 ? T("共用一次提炼，生成两期", "One distillation, two episodes") : undefined} checked={recipe.langs.join() === ls.join()} onSelect={() => { setRecipe({ ...recipe, langs: ls }); close(); }} />
+        {shown.map((ls) => (
+          <MenuItem
+            key={ls.join()}
+            title={ls.length > 1 ? langLabel(ls) : LANG_INFO[ls[0]].native}
+            subtitle={ls.length > 1 ? T("你的语言和原文的语言，共用一次提炼，生成两期", "Yours and the source's: one distillation, two episodes") : ls[0] === written ? T("原文的语言", "The source's language") : undefined}
+            checked={recipe.langs.join() === ls.join()}
+            onSelect={() => { setRecipe({ ...recipe, langs: ls }); close(); }}
+          />
         ))}
+        {!more && <MenuItem title={T("更多语言…", "More languages…")} onSelect={() => setMore(true)} />}
       </>
     )}>
       {langLabel(recipe.langs)}
@@ -806,6 +833,39 @@ function Tune({ recipe, setRecipe, defaultOpen }: { recipe: Recipe; setRecipe: (
   );
 }
 
+/**
+ * While an episode is made: the screen stays on (a phone that locks can stall the run), and closing
+ * the tab asks first. Returns the release.
+ */
+function holdOn(): () => void {
+  let lock: WakeLockSentinel | null = null;
+  let done = false;
+  const take = () => {
+    if (done || document.visibilityState !== "visible" || !("wakeLock" in navigator)) return;
+    navigator.wakeLock
+      .request("screen")
+      .then((l) => {
+        if (done) void l.release();
+        else lock = l;
+      })
+      .catch(() => undefined);
+  };
+  const ask = (e: BeforeUnloadEvent) => {
+    e.preventDefault();
+    e.returnValue = "";
+  };
+  take();
+  // The lock is dropped whenever the page is hidden: take it again on return.
+  document.addEventListener("visibilitychange", take);
+  window.addEventListener("beforeunload", ask);
+  return () => {
+    done = true;
+    void lock?.release().catch(() => undefined);
+    document.removeEventListener("visibilitychange", take);
+    window.removeEventListener("beforeunload", ask);
+  };
+}
+
 /** Ticks while something is running, so time-based copy and the progress bar keep moving. */
 function useNow(on: boolean, ms = 250): number {
   const [now, setNow] = useState(() => Date.now());
@@ -852,7 +912,7 @@ function Steps({ run, live }: { run: Run; live: boolean }) {
   return (
     <div>
       <div className="spread caption tabular" style={{ marginBottom: 8 }}>
-        <span>{live ? T("第 1 章好了就开始播放", "Starts playing as soon as chapter 1 is ready") : T("正在生成", "Generating")}</span>
+        <span>{live ? T("开场几秒后就开始播放，其余边听边做", "The opening plays in a few seconds; the rest is made while you listen") : T("正在生成", "Generating")}</span>
         <span>{clock(now - run.started)}</span>
       </div>
       <div className="progress live">
@@ -898,7 +958,9 @@ function LiveCard({ run, onOpen }: { run: Run; onOpen: () => void }) {
       <span className="caption">
         {other
           ? T(`正在做${other === "en" ? "英文" : "中文"}版（${Math.min(p?.chapters ?? 1, (p?.chapter ?? 0) + 1)}/${p?.chapters ?? 1}）`, `Making the ${other === "en" ? "English" : "Chinese"} episode (${Math.min(p?.chapters ?? 1, (p?.chapter ?? 0) + 1)}/${p?.chapters ?? 1})`)
-          : writing
+          : d.written === 0
+            ? T("开场在播，同时读完全文，第 1 章随后接上", "The opening plays while the whole source is read; chapter 1 follows")
+            : writing
             ? T(`第 ${d.written + 1} 章正在写，已配好 ${d.voiced}/${d.chapters} 章`, `Writing chapter ${d.written + 1}; ${d.voiced} of ${d.chapters} voiced`)
             : d.voiced < d.chapters
               ? T(`正在配音第 ${d.voiced + 1} 章`, `Voicing chapter ${d.voiced + 1}`)

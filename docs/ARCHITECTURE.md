@@ -43,16 +43,24 @@ sequenceDiagram
   participant B as /api/brief
   participant S as /api/script
   participant T as /api/tts
+  participant A as /api/listen · /api/ask
   U->>H: drop a PDF / paste a link
   H->>H: habit prefill; figures and tables cropped from the PDF (on the device)
   H->>P: document head + portrait + recent recipes (with their focus lines)
   P-->>H: content-aware recipe, hidden focus line, one-line reason
   U->>H: (optional) tap a token, then Create
   H->>H: log session (prefill vs final) for the interface harness
-  H->>B: full text + lenses + focus (skipped when this brief is cached)
-  B-->>H: progress lines, then source-grounded brief + FIXED tests T1..Tn
+  par cold open (first language, live playback)
+    H->>S: op "open": the first 8,000 characters (Claude Haiku 5.5, thinking off)
+    S-->>H: title, then each line the moment it is written
+    H->>T: each line, two at a time, with the Turbo sibling of the episode's model
+    T-->>H: MP3 → playing within about 4 s while the source is read
+  and read the source
+    H->>B: full text + lenses + focus (skipped when this brief is cached)
+    B-->>H: progress lines, then source-grounded brief + FIXED tests T1..Tn
+  end
   loop each language
-    H->>S: op "plan": brief + tests + figure captions + chapter lengths
+    H->>S: op "plan": brief + tests + figure captions + chapter lengths (+ the cold open to continue)
     S-->>H: progress lines, then title, chapter plan, chapter 1 + its visuals
     loop chapter k = 1..n
       par voice chapter k
@@ -68,8 +76,17 @@ sequenceDiagram
     H->>S: op "grade": the whole script on T*/S*/P* (LLM) + R* (rules)
     H->>H: stitch MP3, store timings, chapters and visuals, save to IndexedDB
   end
-  H-->>U: Now Playing from chapter 1: figures, sketches, a synced transcript window
+  H-->>U: Now Playing from the cold open: figures, sketches, a synced transcript window
+  opt raise hand
+    U->>H: tap (or hold to type); the current line finishes, the episode pauses
+    H->>A: the recording → Scribe (own key, or the trial's Gateway) → the question
+    H->>A: question + the last lines + brief + the whole source (cached after the first question)
+    A-->>H: each answer line as it is written (Claude Haiku 5.5)
+    H->>T: each line, Turbo → plays on its own channel, then the episode resumes
+  end
 ```
+
+Stages run on tiers (lib/llm/route.ts): reading on the chosen model, chapters on Claude Sonnet 5.5 (the reading model in Heavy mode), checks, prefill, the atlas, the cold open and answers on Claude Haiku 5.5. Only Claude models step down, on Anthropic's API or the AI Gateway; other providers keep their one model. The brief, figures and plan are sent as cached prefix blocks, so every chapter call after the first reads them from the prompt cache.
 
 ## Two-layer recursive self-improvement
 

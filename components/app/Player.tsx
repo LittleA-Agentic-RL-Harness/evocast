@@ -1,16 +1,18 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useApp } from "./context";
 import Artwork from "../ui/Artwork";
 import { MenuItem, Popover, Segmented, Sheet, fade } from "../ui/kit";
 import { useFigures, VisualPanel } from "./Visual";
+import { AskBar, AskBlock, HandButton, useRaiseHand } from "./Ask";
 import { chapterAt, visualAt } from "@/lib/harness/chapters";
+import { detectLang, LANG_INFO } from "@/lib/harness/langs";
 import { lineStarts } from "@/lib/format";
 import { Back15, Fwd30, More, Pause, Play, ThumbDown, ThumbUp, Xmark } from "../ui/icons";
 import { fmt } from "./Listen";
-import type { Episode, Feedback } from "@/lib/types";
+import type { Ask, Chapter, Episode, Feedback, ScriptLine } from "@/lib/types";
 import { PERSONAS } from "@/lib/harness/personas";
 import { STYLES } from "@/lib/harness/styles";
 import { FEEDBACK_CHIPS, applyChip } from "@/lib/harness/profile";
@@ -22,6 +24,7 @@ import { downloadBlob, slug, transcriptMarkdown, voiceLine } from "@/lib/client/
 import { track } from "@/lib/client/track";
 
 const RATES = [1, 1.25, 1.5, 2];
+const NO_CHAPTERS: Chapter[] = [];
 
 export function MiniPlayer() {
   const { player, toggle, setSheet, T, lang } = useApp();
@@ -104,6 +107,29 @@ function Scrubber({ marks, edge, center }: { marks: number[]; edge: number | nul
   );
 }
 
+/**
+ * The transcript lines, drawn again only when the spoken line, the voiced part or a question
+ * changes: not on every time update (a 30-minute episode has hundreds of lines).
+ */
+const Lines = memo(function Lines({ lines, lang, chapters, starts, active, voiced, studio, asks, current, seek }: { lines: ScriptLine[]; lang: string; chapters: Chapter[]; starts: number[]; active: number; voiced: number; studio: boolean; asks: Ask[]; current: Ask | null; seek: (t: number) => void }) {
+  const { T } = useApp();
+  const names = useMemo(() => ({ A: studio ? T("主持", "Host") : "A", B: studio ? T("嘉宾", "Guest") : "B" }), [studio, T]);
+  return (
+    <div lang={lang}>
+      {lines.map((l, i) => (
+        <div key={i}>
+          {chapters.some((c, k) => k > 0 && c.start === i) && <div className="t-chapter">{chapters[chapterAt(chapters, i)].title}</div>}
+          <button data-i={i} className={`t-line ${i === active ? "active" : i < active ? "past" : ""}${i >= voiced ? " pending" : ""}`} disabled={i >= voiced} onClick={() => seek(starts[i] + 0.01)}>
+            <span className="t-who">{names[l.speaker]}</span>
+            <span dir="auto">{stripTags(l.text)}</span>
+          </button>
+          {asks.map((a, k) => a.at === i && <AskBlock key={k} ask={a} names={names} live={a === current} />)}
+        </div>
+      ))}
+    </div>
+  );
+});
+
 export function NowPlaying() {
   const { player, setSheet, toggle, seek, skip, setRate, T, lang, refresh, stop } = useApp();
   const e = player.episode;
@@ -141,10 +167,20 @@ export function NowPlaying() {
   }, [starts, player.time]);
   const chapter = chapterAt(e?.chapters, active);
   const visual = visualAt(e?.visuals, active);
+  const hand = useRaiseHand(e, active, starts[active + 1] ?? Infinity);
+
+  // While the hosts answer a question, the answer stays in the middle of the transcript window.
+  useEffect(() => {
+    if (!hand.current) return;
+    const box = listRef.current;
+    const blocks = box?.querySelectorAll<HTMLElement>("[data-ask]");
+    const block = blocks?.[blocks.length - 1];
+    if (box && block) box.scrollTo({ top: block.offsetTop + block.offsetHeight - box.clientHeight / 2, behavior: "smooth" });
+  }, [hand.current?.question, hand.current?.lines.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The transcript is a fixed window: the line being spoken stays in the middle, and the page never scrolls.
   useEffect(() => {
-    if (!player.sheet || tab !== "transcript" || Date.now() - userScroll.current < 4000) return;
+    if (!player.sheet || tab !== "transcript" || Date.now() - userScroll.current < 4000 || hand.current) return;
     const box = listRef.current;
     const row = box?.querySelector<HTMLElement>(`[data-i="${active}"]`);
     if (box && row) box.scrollTo({ top: row.offsetTop - box.clientHeight / 2 + row.offsetHeight / 2, behavior: "smooth" });
@@ -194,7 +230,7 @@ export function NowPlaying() {
 
   const names = { A: e.style === "studio" ? T("主持", "Host") : "A", B: e.style === "studio" ? T("嘉宾", "Guest") : "B" };
   const passed = e.results.filter((r) => r.pass).length;
-  const chapters = e.chapters ?? [];
+  const chapters = e.chapters ?? NO_CHAPTERS;
   const voicedLines = live ? (e.timings?.length ?? 0) : e.script.lines.length;
   const marks = chapters.slice(1).map((c) => starts[c.start]).filter((t) => Number.isFinite(t));
   const edge = live && voicedLines < e.script.lines.length ? (starts[voicedLines - 1] ?? 0) + 10 : null;
@@ -235,7 +271,11 @@ export function NowPlaying() {
           <div className="np-title">
             <h2 className="headline ellipsis">{e.title}</h2>
             <span className="caption ellipsis">
-              {chapters.length ? `${chapter + 1}/${live?.chapters ?? chapters.length} · ${chapters[chapter]?.title ?? ""}` : `${PERSONAS[e.persona].label[lang]} · ${STYLES[e.style].label[lang]}`}
+              {live && live.written === 0
+                ? T("开场 · 同时在读全文，第 1 章随后接上", "Opening · reading the whole source, chapter 1 follows")
+                : chapters.length
+                  ? `${chapter + 1}/${live?.chapters ?? chapters.length} · ${chapters[chapter]?.title || T("开场", "Opening")}`
+                  : `${PERSONAS[e.persona].label[lang]} · ${STYLES[e.style].label[lang]}`}
             </span>
           </div>
           <Popover
@@ -281,7 +321,7 @@ export function NowPlaying() {
                   <li key={i}>
                     <button className={i === chapter ? "on" : ""} disabled={!ready} onClick={() => seek(starts[c.start] + 0.01)}>
                       <span className="tabular">{i + 1}</span>
-                      <span className="grow ellipsis">{c.title}</span>
+                      <span className="grow ellipsis">{c.title || T("开场", "Opening")}</span>
                       {state && <span className="caption">{live && i === live.written ? <span className="breath dim" /> : null}{state}</span>}
                     </button>
                   </li>
@@ -324,15 +364,7 @@ export function NowPlaying() {
             />
             {tab === "transcript" && (
               <div className="t-window" ref={listRef} onWheel={() => (userScroll.current = Date.now())} onTouchMove={() => (userScroll.current = Date.now())}>
-                {e.script.lines.map((l, i) => (
-                  <div key={i}>
-                    {chapters.some((c, k) => k > 0 && c.start === i) && <div className="t-chapter">{chapters[chapterAt(chapters, i)].title}</div>}
-                    <button data-i={i} className={`t-line ${i === active ? "active" : i < active ? "past" : ""}${i >= voicedLines ? " pending" : ""}`} disabled={i >= voicedLines} onClick={() => seek(starts[i] + 0.01)}>
-                      <span className="t-who">{names[l.speaker]}</span>
-                      <span>{stripTags(l.text)}</span>
-                    </button>
-                  </div>
-                ))}
+                <Lines lines={e.script.lines} lang={LANG_INFO[e.lang]?.code ?? e.lang} chapters={chapters} starts={starts} active={active} voiced={voicedLines} studio={e.style === "studio"} asks={hand.asks} current={hand.current} seek={seek} />
                 {live && player.live?.waiting && (
                   <div className="t-wait caption">
                     <span className="breath dim" /> {T("下一章马上就好", "The next chapter is almost ready")}
@@ -343,7 +375,7 @@ export function NowPlaying() {
             {tab === "notes" && (
               <div className="t-window stack">
                 {/* The brief is shared by both languages: its one-liner leads only when it's in the episode's. */}
-                {/[\u3400-\u9fff]/.test(e.brief.one_liner) === (e.lang === "zh") && <p className="headline" style={{ fontSize: 17 }}>{e.brief.one_liner}</p>}
+                {detectLang(e.brief.one_liner) === e.lang && <p className="headline" style={{ fontSize: 17 }}>{e.brief.one_liner}</p>}
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }}>
                   {e.script.show_notes.map((n, i) => (
                     <li key={i}>{n}</li>
@@ -381,7 +413,8 @@ export function NowPlaying() {
         </section>
 
         <footer className="np-foot">
-          {fb.rating !== 0 && <div className="np-chips-mobile">{chips}</div>}
+          {fb.rating !== 0 && !hand.typing && <div className="np-chips-mobile">{chips}</div>}
+          <AskBar hand={hand} />
           <Scrubber marks={marks} edge={edge} center={<span className="np-rate-mobile">{rating}</span>} />
           <div className="transport">
             <button className="btn small np-rate-btn" onClick={() => setRate(RATES[(RATES.indexOf(player.rate) + 1) % RATES.length])} aria-label={T("播放速度", "Playback speed")}>
@@ -396,6 +429,7 @@ export function NowPlaying() {
             <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => skip(30)} aria-label="+30s">
               <Fwd30 size={26} />
             </button>
+            <HandButton hand={hand} />
           </div>
         </footer>
       </div>

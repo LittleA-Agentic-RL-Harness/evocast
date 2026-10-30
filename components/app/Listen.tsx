@@ -5,6 +5,7 @@ import Artwork from "../ui/Artwork";
 import { Button, Reveal } from "../ui/kit";
 import { Play, Pause } from "../ui/icons";
 import { PERSONAS } from "@/lib/harness/personas";
+import { LANG_INFO } from "@/lib/harness/langs";
 
 export const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
@@ -55,7 +56,7 @@ export default function Listen() {
                     {e.title}
                   </div>
                   <div className="ep-meta" style={{ marginTop: 3 }}>
-                    {fmt(e.durationSec)} · {e.lang === "zh" ? "中文" : "EN"}
+                    {fmt(e.durationSec)} · {LANG_INFO[e.lang]?.name[lang] ?? e.lang}
                     {pct >= 98 ? ` · ${T("已听完", "played")}` : ""}
                   </div>
                 </div>

@@ -1,11 +1,12 @@
 import { errorResponse } from "./keys";
 
 /**
- * A long call as NDJSON: `{"p": n}` lines while the model writes (n = characters so far), then
+ * A long call as NDJSON: `{"p": n}` lines while the model writes (n = characters so far), any
+ * events the work sends on the way (`{"line": …}` as each line of dialogue is written), then
  * `{"ok": result}` or `{"error", "code", "status"}`. The browser shows real progress instead of a
  * frozen screen, and the open stream keeps the connection busy.
  */
-export function ndjson(work: (progress: (chars: number) => void) => Promise<unknown>): Response {
+export function ndjson(work: (progress: (chars: number) => void, emit: (event: Record<string, unknown>) => void) => Promise<unknown>): Response {
   const enc = new TextEncoder();
   const body = new ReadableStream<Uint8Array>({
     async start(c) {
@@ -18,7 +19,7 @@ export function ndjson(work: (progress: (chars: number) => void) => Promise<unkn
         send({ p: chars });
       };
       try {
-        send({ ok: await work(progress) });
+        send({ ok: await work(progress, send) });
       } catch (e) {
         const r = errorResponse(e);
         const b = (await r.json()) as { error: string; code?: string };

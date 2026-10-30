@@ -1,6 +1,9 @@
 // Shared domain types for the Evocast pipeline (client + server).
 
-export type Lang = "zh" | "en";
+/** The interface's language. */
+export type UiLang = "zh" | "en";
+/** The language an episode is spoken in (lib/harness/langs.ts). */
+export type Lang = "zh" | "en" | "ja" | "ko" | "es" | "fr" | "de" | "pt" | "it" | "ru" | "ar" | "hi";
 export type Mode = "lite" | "medium" | "heavy";
 export type PersonaId = "researcher" | "engineer" | "executive" | "operator" | "newcomer";
 export type StyleId = "studio" | "idol";
@@ -148,13 +151,28 @@ export interface Episode extends EpisodeRequest {
   visuals?: Visual[];
   figures?: FigureRef[];
   feedback?: Feedback;
+  /** Questions the listener asked mid-episode (raise hand), with the hosts' answers. */
+  asks?: Ask[];
+}
+
+/** A raised hand: the question, where in the episode it was asked, and how the hosts answered. */
+export interface Ask {
+  /** Index of the line playing when the hand went up. */
+  at: number;
+  question: string;
+  lines: ScriptLine[];
+  askedAt: string;
+  /** From the end of the question to the first word of the answer (ms). */
+  ms?: number;
 }
 
 export type VoiceChange =
   /** A free plan's first run: each seat's default is the closest voice in the account. */
   | { kind: "account"; names: [string, string] }
   /** A voice the provider no longer has (or a free plan can't use): the seat's top pick took over, saved unless on the trial. */
-  | { kind: "replaced"; style: StyleId; lang: Lang; speaker: Speaker; from: string; to: string; saved?: boolean };
+  | { kind: "replaced"; style: StyleId; lang: Lang; speaker: Speaker; from: string; to: string; saved?: boolean }
+  /** A language whose seat had no native default: ElevenLabs' top pick, saved. */
+  | { kind: "picked"; style: StyleId; lang: Lang; speaker: Speaker; to: string };
 
 /** Keys and provider choices sent per request (BYOK). Never persisted server-side. */
 export interface ClientKeys {
@@ -170,4 +188,6 @@ export interface ClientKeys {
   llmBaseUrl?: string;
   llmModel?: string;
   passcode?: string;
+  /** false: the chosen model does every stage, instead of lighter Claude models writing and checking (lib/llm/route.ts). */
+  route?: boolean;
 }

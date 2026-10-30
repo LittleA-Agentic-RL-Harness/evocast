@@ -1,5 +1,6 @@
 import type { Lang, Speaker, StyleId } from "../types";
 import { STYLE_IDS, type VoiceOverrides, type VoiceSlot } from "../harness/styles";
+import { LANG_INFO, LANGS } from "../harness/langs";
 import type { SharedVoice, VerifiedLanguage, VoiceInfo } from "./elevenlabs";
 
 // Choosing voices: pure rules shared by the API routes, the voice picker and the pipeline.
@@ -10,7 +11,6 @@ export interface Seat {
   speaker: Speaker;
 }
 
-const LANGS: Lang[] = ["zh", "en"];
 const SPEAKERS: Speaker[] = ["A", "B"];
 
 /** Who sits in a seat: Studio is a man hosting a woman; Idol Radio is two young women. */
@@ -23,6 +23,7 @@ export function seatTraits(s: Seat): { gender: "male" | "female"; age?: "young";
 export function designBrief(seat: Seat, bilingual = false): string {
   const t = seatTraits(seat);
   const zh = seat.lang === "zh" || bilingual;
+  const native = seat.lang === "zh" || seat.lang === "en" || bilingual ? null : LANG_INFO[seat.lang].name.en;
   const who =
     seat.style === "idol"
       ? zh
@@ -32,7 +33,7 @@ export function designBrief(seat: Seat, bilingual = false): string {
         ? "man in his 30s, a calm, warm and articulate podcast host"
         : "woman in her 30s, a confident, friendly expert guest on a tech podcast";
   if (bilingual) return `Bilingual ${who}; speaks native Mandarin Chinese and natural American English; studio-quality recording, natural conversational pace.`;
-  return `${zh ? "Native Mandarin Chinese" : "Native American English"} ${who}; ${zh ? "standard Mandarin, " : ""}studio-quality recording, natural conversational pace.`;
+  return `${native ? `Native ${native}` : zh ? "Native Mandarin Chinese" : "Native American English"} ${who}; ${zh ? "standard Mandarin, " : ""}studio-quality recording, natural conversational pace.`;
 }
 
 /** Free ElevenLabs plans can't use Voice Library voices through the API. */

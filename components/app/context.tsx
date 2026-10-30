@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Episode, Lang } from "@/lib/types";
+import type { Episode, UiLang } from "@/lib/types";
 import { visibleSurfaces, type Session, type Surface, type UIGenome } from "@/lib/harness/ui";
 import { SEED_UI } from "@/lib/harness/ui";
 import { EMPTY_PROFILE, type ListenerProfile } from "@/lib/harness/profile";
@@ -9,7 +9,7 @@ import { track } from "@/lib/client/track";
 import { DEFAULT_SETTINGS, getAudio, getEpisode, getProfile, getSessions, getTuneNotice, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, saveTuneNotice, type Settings, type TuneNotice } from "@/lib/client/store";
 import { checkContentGuard } from "@/lib/client/evolution";
 import { undoTuning } from "@/lib/client/autotune";
-import { LiveAudio } from "@/lib/client/live";
+import { liveStream, type LiveStream } from "@/lib/client/live";
 import type { Draft, Progress } from "@/lib/client/pipeline";
 import { silentMp3 } from "@/lib/tts/mp3";
 
@@ -49,7 +49,7 @@ interface Ctx {
   ready: boolean;
   settings: Settings;
   update: (s: Settings) => void;
-  lang: Lang;
+  lang: UiLang;
   T: (zh: string, en: string) => string;
   view: View;
   go: (v: View) => void;
@@ -83,6 +83,23 @@ interface Ctx {
   liveAudio: (bytes: Uint8Array, seconds: number, d: Draft) => void;
   liveDraft: (d: Draft) => void;
   liveEnd: (e?: Episode) => void;
+  /** Milliseconds the live episode stood still waiting for the next chapter (cold open coverage). */
+  liveWaited: () => number;
+  /** Raise hand: the episode pauses for an answer, which plays on a channel of its own. */
+  aside: Aside;
+}
+
+export interface Aside {
+  /** Call inside the tap, so the answer may play by itself a few seconds later. */
+  prime: () => void;
+  /** Let the line being spoken finish (up to 1.5 s, until `lineEnd`), then pause; says whether it was playing. */
+  hold: (lineEnd: number) => Promise<boolean>;
+  /** Play one clip of the answer; resolves when it has been heard. */
+  play: (bytes: Uint8Array) => Promise<void>;
+  /** Stop the answer. */
+  hush: () => void;
+  /** Back to the episode, playing again if it was. */
+  release: (resume: boolean) => void;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -106,16 +123,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [run, setRun] = useState<Run | null>(null);
   const cancel = useRef<(() => void) | null>(null);
   // The live stream, the estimated length while it grows, and the saved episode once it's done.
-  const liveRef = useRef<LiveAudio | null>(null);
+  const liveRef = useRef<LiveStream | null>(null);
   const estimate = useRef(0);
   const saved = useRef<Episode | null>(null);
   // A live episode the person switched away from keeps generating, but no longer takes over the player.
   const leftLive = useRef<string | null>(null);
   const liveId = useRef<string | null>(null);
+  // Time spent at the edge of a live stream, waiting for voicing to catch up.
+  const waited = useRef({ total: 0, since: 0 });
   // Listening writes are queued; they're tagged with the episode playing when queued (stop() clears it right after).
   const episodeRef = useRef<Episode | null>(null);
   episodeRef.current = player.episode;
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const asideRef = useRef<HTMLAudioElement | null>(null);
   const urlRef = useRef<string | null>(null);
   // Listening as it really happened: seconds actually played (not the furthest point a seek reached),
   // jumps back, and seconds skipped forward. Reset per episode; folded into its feedback on pause.
@@ -158,6 +178,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (tuning) await undoTuning(tuning);
     setTuning(null);
   }, [tuning]);
+
+  // The visible part of the screen, for full-screen sheets: on iOS the keyboard covers the page
+  // instead of resizing it, so a field near the bottom would sit under it.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement.style;
+    const set = () => {
+      root.setProperty("--vvh", `${Math.round(vv.height)}px`);
+      root.setProperty("--vvt", `${Math.round(vv.offsetTop)}px`);
+    };
+    set();
+    vv.addEventListener("resize", set);
+    vv.addEventListener("scroll", set);
+    return () => {
+      vv.removeEventListener("resize", set);
+      vv.removeEventListener("scroll", set);
+    };
+  }, []);
 
   useEffect(() => {
     setSettings(loadSettings());
@@ -291,8 +330,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         backSeeks.current = 0;
         skipped.current = 0;
         reached.current = new Set();
-        liveRef.current = new LiveAudio(a);
+        liveRef.current = liveStream(a);
         liveId.current = d.episode.id;
+        waited.current = { total: 0, since: 0 };
         a.playbackRate = player.rate;
         track("play", { lang: d.episode.lang, persona: d.episode.persona, style: d.episode.style, seconds: d.estimatedSec, live: true });
         setPlayer((p) => ({ ...p, episode: d.episode, time: 0, duration: d.estimatedSec, sheet: true, live: liveState(d) }));
@@ -321,6 +361,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
     saved.current = e;
     estimate.current = e.durationSec;
     setPlayer((p) => (p.episode?.id === e.id ? { ...p, episode: e, duration: e.durationSec, live: p.live ? { ...p.live, written: p.live.chapters, voiced: p.live.chapters, done: true } : null } : p));
+  }, []);
+
+  const aside = useMemo<Aside>(() => {
+    const blank = () => URL.createObjectURL(new Blob([silentMp3(0.1) as BlobPart], { type: "audio/mpeg" }));
+    let stopClip: (() => void) | null = null;
+    return {
+      prime: () => {
+        const b = asideRef.current;
+        if (!b) return;
+        const url = blank();
+        b.src = url;
+        b.play()
+          .catch(() => undefined)
+          .finally(() => URL.revokeObjectURL(url));
+      },
+      // Playback events, not a polling loop: a background tab slows chained timers to a crawl.
+      hold: (lineEnd) =>
+        new Promise<boolean>((resolve) => {
+          const a = audioRef.current;
+          if (!a || a.paused) return resolve(false);
+          const done = () => {
+            a.removeEventListener("timeupdate", check);
+            clearTimeout(cap);
+            a.pause();
+            resolve(true);
+          };
+          const check = () => a.currentTime >= lineEnd - 0.05 && done();
+          const cap = setTimeout(done, 1500);
+          a.addEventListener("timeupdate", check);
+          check();
+        }),
+      play: (bytes) =>
+        new Promise<void>((resolve) => {
+          const b = asideRef.current;
+          if (!b) return resolve();
+          const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "audio/mpeg" }));
+          const end = () => {
+            b.removeEventListener("ended", end);
+            b.removeEventListener("error", end);
+            URL.revokeObjectURL(url);
+            stopClip = null;
+            resolve();
+          };
+          stopClip = end;
+          b.addEventListener("ended", end);
+          b.addEventListener("error", end);
+          b.src = url;
+          b.playbackRate = audioRef.current?.playbackRate ?? 1;
+          b.play().catch(end);
+        }),
+      hush: () => {
+        asideRef.current?.pause();
+        stopClip?.();
+      },
+      release: (resume) => {
+        if (resume) audioRef.current?.play().catch(() => undefined);
+      },
+    };
   }, []);
 
   const toggle = useCallback(() => {
@@ -383,28 +481,60 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const e = player.episode;
     if (!e || !("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({ title: e.title, artist: "Evocast", album: e.sourceName });
-    navigator.mediaSession.setActionHandler("play", () => audioRef.current?.play());
-    navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
-    navigator.mediaSession.setActionHandler("seekbackward", () => seek((audioRef.current?.currentTime ?? 0) - 15));
-    navigator.mediaSession.setActionHandler("seekforward", () => seek((audioRef.current?.currentTime ?? 0) + 30));
+    const ms = navigator.mediaSession;
+    ms.metadata = new MediaMetadata({ title: e.title, artist: "Evocast", album: e.sourceName, artwork: [{ src: "/apple-icon.png", sizes: "180x180", type: "image/png" }] });
+    // A browser that lacks one of these actions throws; the others still work.
+    const on = (action: MediaSessionAction, handler: MediaSessionActionHandler) => {
+      try {
+        ms.setActionHandler(action, handler);
+      } catch {
+        /* not supported here */
+      }
+    };
+    on("play", () => void audioRef.current?.play());
+    on("pause", () => audioRef.current?.pause());
+    on("seekbackward", (d) => seek((audioRef.current?.currentTime ?? 0) - (d.seekOffset ?? 15)));
+    on("seekforward", (d) => seek((audioRef.current?.currentTime ?? 0) + (d.seekOffset ?? 30)));
+    on("seekto", (d) => d.seekTime != null && seek(d.seekTime));
   }, [player.episode, seek]);
+
+  // The lock screen's progress bar, kept true every few seconds.
+  const posAt = useRef(0);
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState || !player.duration) return;
+    if (Math.abs(player.time - posAt.current) < 5 && player.time > 1) return;
+    posAt.current = player.time;
+    try {
+      navigator.mediaSession.setPositionState({ duration: player.duration, playbackRate: player.rate, position: Math.min(player.time, player.duration) });
+    } catch {
+      /* a duration still being estimated can be off by a moment */
+    }
+  }, [player.time, player.duration, player.rate]);
 
   const surfaces = useMemo(() => visibleSurfaces(ui, episodes.length, settings.showAll), [ui, episodes.length, settings.showAll]);
   const lang = settings.uiLang;
   const T = useCallback((zh: string, en: string) => (lang === "zh" ? zh : en), [lang]);
 
-  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd };
+  const liveWaited = useCallback(() => waited.current.total + (waited.current.since ? Date.now() - waited.current.since : 0), []);
+
+  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd, liveWaited, aside };
 
   return (
     <AppCtx.Provider value={value}>
       {children}
+      <audio ref={asideRef} preload="none" />
       <audio
         ref={audioRef}
         preload="metadata"
         onPlay={() => setPlayer((p) => ({ ...p, playing: true }))}
-        onWaiting={() => setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p))}
-        onPlaying={() => setPlayer((p) => (p.live?.waiting ? { ...p, live: { ...p.live, waiting: false } } : p))}
+        onWaiting={() => {
+          if (liveRef.current && !waited.current.since) waited.current.since = Date.now();
+          setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p));
+        }}
+        onPlaying={() => {
+          if (waited.current.since) waited.current = { total: waited.current.total + Date.now() - waited.current.since, since: 0 };
+          setPlayer((p) => (p.live?.waiting ? { ...p, live: { ...p.live, waiting: false } } : p));
+        }}
         onPause={() => {
           setPlayer((p) => ({ ...p, playing: false }));
           persistListening();
@@ -421,6 +551,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setPlayer((p) => ({ ...p, time: a.currentTime, duration: total || p.duration }));
         }}
         onEnded={() => {
+          // A live episode that runs out of voiced audio is waiting for the next chapter, not finished.
+          if (liveRef.current && player.live && !player.live.done) {
+            if (!waited.current.since) waited.current.since = Date.now();
+            setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p));
+            return;
+          }
           milestone(100);
           persistListening(true);
         }}

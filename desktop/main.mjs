@@ -1,7 +1,7 @@
 // Evocast for macOS: runs the Next.js standalone server (all API routes) on
 // this machine and shows it in a native window. Keys and data never leave the Mac
 // except for the calls you make to Anthropic / ElevenLabs with your own keys.
-import { app, BrowserWindow, Menu, shell, utilityProcess } from "electron";
+import { app, BrowserWindow, Menu, screen, shell, utilityProcess } from "electron";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cpSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -74,11 +74,13 @@ async function startServer() {
 }
 
 function createWindow() {
+  // A 13-inch MacBook has about 1280×710 between the menu bar and the Dock: fit the first window to it.
+  const area = screen.getPrimaryDisplay().workAreaSize;
   const win = new BrowserWindow({
-    width: 1180,
-    height: 820,
+    width: Math.min(1180, Math.round(area.width * 0.92)),
+    height: Math.min(820, Math.round(area.height * 0.94)),
     minWidth: 380,
-    minHeight: 600,
+    minHeight: 560,
     title: "Evocast",
     titleBarStyle: "hidden",
     trafficLightPosition: { x: 18, y: 18 },

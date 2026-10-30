@@ -79,6 +79,28 @@ export async function gatewaySpeechTimed(token: string, inputs: DialogueInput[],
   return { audio, starts };
 }
 
+/** Speech to text through the Gateway (the trial's raise-hand questions): ElevenLabs Scribe v2. */
+export const GATEWAY_STT = "elevenlabs/scribe-v2";
+/** Twice Scribe v2's launch price on the Gateway, per second of audio: what the meter counts when live prices can't be read. */
+export const GATEWAY_STT_USD_PER_S = 0.0000611;
+
+export async function gatewayTranscribe(token: string, audio: Uint8Array, mediaType: string, lang?: string): Promise<{ text: string; seconds: number }> {
+  const res = await fetch(`${GATEWAY_URL}/v4/ai/transcription-model`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "ai-gateway-protocol-version": "0.0.1",
+      "ai-transcription-model-specification-version": "4",
+      "ai-model-id": GATEWAY_STT,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ audio: Buffer.from(audio).toString("base64"), mediaType, ...(lang ? { providerOptions: { elevenlabs: { languageCode: lang } } } : {}) }),
+  });
+  const j = (await res.json().catch(() => ({}))) as { text?: string; durationInSeconds?: number; error?: { message?: string } };
+  if (!res.ok) throw new ElevenError(`Transcription via AI Gateway failed (${res.status}): ${j.error?.message ?? "no text"}`, res.status === 402 || res.status === 429 ? res.status : 502);
+  return { text: (j.text ?? "").trim(), seconds: j.durationInSeconds ?? 0 };
+}
+
 /** Twice Eleven Music's launch price on the Gateway: what the trial meter counts when live prices can't be read. */
 export const GATEWAY_MUSIC_USD_PER_S = 0.0025;
 
@@ -94,9 +116,12 @@ export async function gatewaySpeechPrice(id: string): Promise<{ perChar?: number
   if (!prices || Date.now() - prices.at > PRICES_MS) {
     try {
       const res = await fetch(`${GATEWAY_URL}/v1/models`, { signal: AbortSignal.timeout(4_000) });
-      const j = (await res.json()) as { data: { id: string; pricing?: { speech_input_character_cost?: string; speech_output_cost_per_second?: string } }[] };
+      const j = (await res.json()) as { data: { id: string; pricing?: { speech_input_character_cost?: string; speech_output_cost_per_second?: string; transcription_duration_cost_per_second?: string } }[] };
       const num = (v?: string) => (v != null && Number(v) > 0 ? Number(v) : undefined);
-      prices = { at: Date.now(), byId: Object.fromEntries(j.data.map((m) => [m.id, { perChar: num(m.pricing?.speech_input_character_cost), perSecond: num(m.pricing?.speech_output_cost_per_second) }])) };
+      prices = {
+        at: Date.now(),
+        byId: Object.fromEntries(j.data.map((m) => [m.id, { perChar: num(m.pricing?.speech_input_character_cost), perSecond: num(m.pricing?.speech_output_cost_per_second ?? m.pricing?.transcription_duration_cost_per_second) }])),
+      };
     } catch {
       return prices?.byId[id];
     }

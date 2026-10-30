@@ -1,9 +1,9 @@
-import type { Lang } from "../types";
+import type { UiLang } from "../types";
 
 /** Focus lenses (LittleA's defaults: AI-native commerce). Picking lenses adds a grounded "what this means for us" angle. */
 export interface Lens {
   id: string;
-  label: Record<Lang, string>;
+  label: Record<UiLang, string>;
   angle: string;
 }
 

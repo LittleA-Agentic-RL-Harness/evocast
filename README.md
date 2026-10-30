@@ -33,16 +33,19 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 2. **It improves itself — measurably.** The generation *harness* evolves with **HarnessPro** (arXiv [2610.26770](https://arxiv.org/abs/2610.26770)): fixed label‑free tests, cost/balanced/quality planners, Pareto selection → three modes, *lite · medium · heavy*. A second harness evolves the **interface** itself.
 3. **It gets to know you.** What's pre‑filled, what's shown, which shortcuts appear — all learned from your choices, replay‑evaluated for free, auto‑reverted if they get worse. The papers you read become a map of your research universe, and your portrait fills in like a puzzle. It never leaves your device.
 
-| | Evocast | NotebookLM Audio | ElevenLabs GenFM | Podcastfy / open‑notebook |
+| | Evocast | Gemini Notebook (NotebookLM) | ElevenLabs GenFM | Podcastfy / open‑notebook |
 |---|:-:|:-:|:-:|:-:|
 | Open source, self‑host, bring your own keys | ✅ | — | — | ✅ |
 | Any source: PDF, Markdown, HTML, Word, PowerPoint, EPUB, ZIP, folders, links | ✅ parsed on device | ✅ | ✅ | ✅ |
 | Persona‑specific versions of one source | ✅ 5 personas | prompt only | prompt only | profiles |
-| Hard length budget (3–8 min) + coverage tests | ✅ | — | duration scale | — |
+| Hard length budget (8 · 15 · 30 min) + coverage tests | ✅ | — | duration scale | — |
+| First words within seconds, while the rest is made | ✅ ~4 s cold open | — | — | — |
+| Raise your hand mid‑episode, answered from the source | ✅ voice or text | ✅ interactive mode | — | — |
+| The source's own figures beside the narration | ✅ | — | — | — |
 | Fact‑checking against fixed, source‑derived tests | ✅ | — | — | — |
 | Self‑improving harness (Pareto, lite/medium/heavy) | ✅ | — | — | — |
 | Self‑improving interface & prefill | ✅ | — | — | — |
-| Chinese + English, code‑switched tech terms | ✅ | ✅ | ✅ | ✅ |
+| Languages | 12, follows the source | 80+ | 32 | varies |
 | Synced transcript (per‑line timestamps) | ✅ | — | — | — |
 | Voice choice, voice design, cloning | ✅ | — | ✅ | varies |
 | Web · installable PWA · native Mac app | ✅ | web | web | web / docker |
@@ -89,11 +92,15 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 ```mermaid
 flowchart LR
   A["📄 PDF / link"] --> P["✦ Prefill<br/>habit + content"]
+  P --> O["Cold open from the first pages<br/>Haiku → v4 Turbo, line by line"]
   P --> B["Brief + FIXED tests<br/>(once per document, cached)"]
-  B --> S["Chapters per persona & language<br/>k+1 written while k is voiced"]
+  O --> L
+  B --> S["Chapters per persona & language<br/>Sonnet · k+1 written while k is voiced"]
   S --> T["Eleven v4 dialogue<br/>per-line timestamps"]
-  T --> L["🎧 Listen from chapter 1<br/>figures · sketches · synced transcript"]
-  L --> F["👍 👎 tags · completion · speed"]
+  T --> L["🎧 Listen in ~4 s<br/>figures · sketches · synced transcript"]
+  L --> H["✋ Raise hand<br/>Scribe → answer from the source"]
+  H --> L
+  L --> F["👍 👎 tags · questions · completion"]
   F --> E["Evolve<br/>content harness + interface harness"]
   E -. better harness .-> S
   E -. better prefill & UI .-> P
@@ -107,7 +114,7 @@ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design notes and rese
 
 ## Quick start
 
-**Use it** — open [evocast.vercel.app](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*.
+**Use it** — open [evocast.vercel.app](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*. Works in Chrome, Edge, Safari (macOS and iOS 16.4+) and Firefox, from a 320 px phone, upright or on its side, to a 2560 px display; every screen is checked at those sizes on each engine.
 
 **Deploy your own** — one click, no environment variables needed (everyone brings their own keys). Add Neon from the Vercel Marketplace to turn on analytics, the admin console and the free trial; [Operations](docs/OPERATIONS.md) covers costs and limits.
 
@@ -142,7 +149,7 @@ Keys stay on your device and are sent per request to stateless routes that forwa
 
 ## Free trial (no keys)
 
-On Vercel, visitors can try Evocast before bringing keys. The trial runs **Claude Opus 5.5** and **ElevenLabs** on [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), authenticated by the deployment's own OIDC identity (nothing to create or rotate) and billed to the team's AI Gateway credits. Every call is metered at its real cost in Postgres and capped per visitor (`TRIAL_VISITOR_USD`, default $1.50 a day) and for the whole site (`TRIAL_DAILY_USD`, default $5 a day); sources are read up to their first 100k characters. Without a database, or with `TRIAL=off`, the welcome screen offers the offline demo instead. Off Vercel, set `AI_GATEWAY_API_KEY`.
+On Vercel, visitors can try Evocast before bringing keys. The trial reads with **Claude Opus 5.5**, writes with **Sonnet 5.5**, opens, checks and answers with **Haiku 5.5**, and speaks and listens with **ElevenLabs** (Eleven v4, Scribe) on [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), authenticated by the deployment's own OIDC identity (nothing to create or rotate) and billed to the team's AI Gateway credits. Every call is metered at its real cost in Postgres and capped per visitor (`TRIAL_VISITOR_USD`, default $1.50 a day) and for the whole site (`TRIAL_DAILY_USD`, default $5 a day); sources are read up to their first 100k characters. Without a database, or with `TRIAL=off`, the welcome screen offers the offline demo instead. Off Vercel, set `AI_GATEWAY_API_KEY`.
 
 ## Bring anything
 
@@ -160,7 +167,8 @@ Connect any Postgres (Vercel → Storage → **Neon**, free plan) and set `ADMIN
 - **Funnel**: visit → keys or trial → import → create → episode → play → 75 % listened, with drop‑off and time to first episode.
 - **Sources**: referring pages with full URLs, `utm_*` campaigns and landing pages, each with its own conversion. Click one to scope the whole dashboard.
 - **Imports, clicks, generation, listening, audience, client errors**, and a live event stream.
-- **Trial compute**: today's trial spend against the cap, the live AI Gateway balance, model and voice spend.
+- **Trial compute**: today's trial spend against the cap, the live AI Gateway balance, model, voice and spoken-question spend.
+- **Speed**: median time to the first sound, and questions asked with their median answer time.
 - **Explore**: read‑only SQL over the `events` table with ready‑made queries (retention cohorts, a visitor's path…) and CSV / NDJSON export.
 
 Nothing is collected without a database; see [SECURITY.md](SECURITY.md) for exactly what is and isn't recorded.
@@ -175,7 +183,7 @@ Nothing is collected without a database; see [SECURITY.md](SECURITY.md) for exac
 | Product / Commerce Ops | scenarios, metrics, a 3‑step experiment |
 | Newcomer | one strong analogy, every term defined |
 
-Two voice packs per language — **Studio Interview** (calm, premium) and **Idol Radio** (sweet, bright) — and every seat can be swapped:
+Two voice packs — **Studio Interview** (calm, premium) and **Idol Radio** (sweet, bright) — in twelve languages. Chinese and English have vetted pairs; the others use native Voice Library voices verified on Eleven v4 where a fitting one exists (with your own paid ElevenLabs key, ElevenLabs' top pick for the seat, saved), else the show's English voice, which Eleven v4 voices in any language. Every seat can be swapped:
 
 - **For you**: ElevenLabs' picks for that seat, kept only when they cost normal credits, have a notice period (so they can't vanish overnight) and aren't live‑moderated; voices verified in the seat's language on Eleven v4 come first, and previews play in that language. The same tab searches the whole Voice Library.
 - **Mine**: your account's voices, best fit for the seat first. **Design**: describe a voice → 3 previews → save. **Instant Voice Cloning** for voices you have the right to clone.
@@ -187,7 +195,9 @@ Optional **Eleven Music** intro sting.
 ## Roadmap
 
 - [x] Free trial on Vercel AI Gateway; real episodes and a real evolution run in the README
-- [ ] Pluggable TTS providers (OpenAI, Gemini, local Kokoro / CosyVoice)
+- [x] First words in seconds (cold open), raise your hand mid‑episode, twelve languages, a model per step
+- [ ] Streaming questions and answers (realtime transcription and voice) for a sub‑3‑second reply
+- [ ] Pluggable TTS providers (OpenAI, Gemini, local Kokoro / CosyVoice) for 120+ languages
 - [ ] Cross‑family judge model; difficulty routing to lite / medium / heavy
 - [ ] Team hub (shared library and harness)
 - [ ] Topic subscriptions → daily briefing; RSS feed output

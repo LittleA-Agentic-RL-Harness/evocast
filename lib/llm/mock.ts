@@ -1,5 +1,5 @@
 import type { Brief, EpisodeRequest, Script, TestCase } from "../types";
-import type { ChapterOut, Diagnosis, EpisodePlan, Plan } from "../harness/schemas";
+import type { ChapterOut, ColdOpen, Diagnosis, EpisodePlan, Plan } from "../harness/schemas";
 import type { Harness } from "../harness/genome";
 import { targetChars } from "../harness/prompts";
 
@@ -108,6 +108,32 @@ export function mockEpisodePlan(brief: Brief, req: EpisodeRequest, h: Harness, m
     show_notes: first.show_notes,
     chapters: minutes.map((_, i) => ({ title: i === minutes.length - 1 ? names[names.length - 1] : names[i % (names.length - 1)], goal: "Demo chapter.", covers: [] })),
     ...mockChapter(brief, req, h, minutes[0], 0, minutes.length),
+  };
+}
+
+/** A demo cold open from the opening pages: their first sentences, read in turns. */
+export function mockColdOpen(head: string, req: EpisodeRequest): ColdOpen {
+  const zh = req.lang === "zh";
+  const s = sentences(head).slice(0, 3);
+  const said = s.length ? s : [zh ? "这份材料提出了一个值得细听的问题。" : "This document raises a question worth hearing out."];
+  return {
+    title: mockBrief(head).brief.title.slice(0, 60),
+    lines: [
+      ...said.map((t, i) => ({ speaker: (i % 2 ? "B" : "A") as "A" | "B", text: clip(t, zh ? 90 : 240) })),
+      { speaker: "B", text: zh ? "那它到底是怎么做到的？我们接着往下看。" : "So how does it actually do that? Let's dig in." },
+    ],
+  };
+}
+
+/** A demo answer: says what it is, and reads the source's first fitting sentence. */
+export function mockAnswer(source: string, req: EpisodeRequest): { lines: { speaker: "A" | "B"; text: string }[] } {
+  const zh = req.lang === "zh";
+  const s = sentences(source)[0] ?? "";
+  return {
+    lines: [
+      { speaker: "A", text: zh ? `好问题。演示模式没有接大模型，先读一句原文：${clip(s, 90)}` : `Good question. Demo mode has no model behind it, so here's a line from the source: ${clip(s, 200)}` },
+      { speaker: "B", text: zh ? "填上钥匙以后，我们会照着原文认真回答。回到刚才说的。" : "With your own keys, we'll answer properly from the source. Back to where we were." },
+    ],
   };
 }
 

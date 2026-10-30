@@ -16,3 +16,7 @@ launch/
 .vercel
 .claude/
 .DS_Store
+
+# Browser tests
+/test-results/
+/playwright-report/

@@ -21,6 +21,11 @@ function envFallback(req: Request, name: string): string | undefined {
 }
 
 export function resolveLLM(req: Request): LLMConfig {
+  const cfg = resolveModel(req);
+  return req.headers.get("x-llm-route") === "off" ? { ...cfg, route: false } : cfg;
+}
+
+function resolveModel(req: Request): LLMConfig {
   const h = req.headers;
   const provider = (h.get("x-llm-provider") ?? "anthropic") as LLMConfig["provider"] | "hosted";
   const price = h.get("x-llm-price");
@@ -84,6 +89,8 @@ export function assertPublicUrl(raw: string): URL {
 export function errorResponse(e: unknown): Response {
   const status = e instanceof LLMError ? e.status : 500;
   const message = e instanceof Error ? e.message : String(e);
+  // Our own failures go to the deployment's logs (Vercel Observability); a caller's bad key or limit doesn't.
+  if (status >= 500) console.error(`[api] ${status} ${message.slice(0, 300)}`);
   const code = (e as { code?: unknown })?.code;
   return Response.json({ error: message, ...(typeof code === "string" ? { code } : {}) }, { status });
 }

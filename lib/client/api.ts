@@ -10,6 +10,7 @@ export function keyHeaders(k: ClientKeys, price?: { input: number; output: numbe
   if (k.llmModel) h["x-llm-model"] = k.llmModel;
   if (k.elevenlabsKey) h["x-el-key"] = k.elevenlabsKey;
   if (k.passcode) h["x-app-passcode"] = k.passcode;
+  if (k.route === false) h["x-llm-route"] = "off";
   if (price) h["x-llm-price"] = JSON.stringify(price);
   return h;
 }
@@ -23,6 +24,24 @@ export class ApiError extends Error {
     super(message);
   }
 }
+
+/**
+ * fetch, tried once more when the network itself failed (a phone between cells, a laptop waking up):
+ * the request never got an answer. Answers, errors included, are never retried here.
+ */
+async function send(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch (e) {
+    if (init.signal?.aborted) throw e;
+    await new Promise((r) => setTimeout(r, 900));
+    if (init.signal?.aborted) throw e;
+    return fetch(path, init);
+  }
+}
+
+/** A failure of the connection itself, as each browser words it. */
+export const isNetworkError = (e: unknown) => e instanceof TypeError && /fetch|load failed|network/i.test(e.message);
 
 async function fail(res: Response, fallback: string): Promise<never> {
   let msg = fallback;
@@ -40,17 +59,25 @@ async function fail(res: Response, fallback: string): Promise<never> {
 }
 
 export async function postJSON<T>(path: string, body: unknown, headers: Record<string, string>, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
+  const res = await send(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `${path} failed (${res.status})`);
   return (await res.json()) as T;
 }
 
 /**
- * A long call with live progress: `onProgress(chars)` while the model writes, then the result.
- * Errors that arrive mid-stream carry the same codes as plain responses.
+ * A long call with live progress: `onProgress(chars)` while the model writes, `onEvent` for what the
+ * server sends on the way (a line of dialogue as it is written), then the result. Errors that arrive
+ * mid-stream carry the same codes as plain responses.
  */
-export async function postStream<T>(path: string, body: unknown, headers: Record<string, string>, onProgress: (chars: number) => void, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson", ...headers }, body: JSON.stringify(body), signal });
+export async function postStream<T>(
+  path: string,
+  body: unknown,
+  headers: Record<string, string>,
+  onProgress: (chars: number) => void,
+  signal?: AbortSignal,
+  onEvent?: (event: Record<string, unknown>) => void,
+): Promise<T> {
+  const res = await send(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `${path} failed (${res.status})`);
   if (!res.body || !(res.headers.get("content-type") ?? "").includes("ndjson")) return (await res.json()) as T;
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -67,19 +94,20 @@ export async function postStream<T>(path: string, body: unknown, headers: Record
       if (m.p !== undefined) onProgress(m.p);
       else if ("ok" in m) return m.ok as T;
       else if (m.error) throw new ApiError(m.error, m.code ?? (m.status === 429 ? "rate_limited" : undefined));
+      else onEvent?.(m);
     }
   }
   throw new ApiError(`${path} ended before its result`);
 }
 
 export async function postAudio(path: string, body: unknown, headers: Record<string, string>, signal?: AbortSignal): Promise<Uint8Array> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
+  const res = await send(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `TTS failed (${res.status})`);
   return new Uint8Array(await res.arrayBuffer());
 }
 
 export async function getJSON<T>(path: string, headers: Record<string, string>): Promise<T> {
-  const res = await fetch(path, { headers });
+  const res = await send(path, { headers });
   const body = (await res.json()) as T & { error?: string; code?: string };
   if (!res.ok) throw new ApiError(body.error ?? `${path} failed (${res.status})`, body.code);
   return body;

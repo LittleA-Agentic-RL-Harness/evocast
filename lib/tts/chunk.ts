@@ -1,5 +1,6 @@
 import type { Lang, ScriptLine } from "../types";
 import { MAX_CHUNK_CHARS } from "./models";
+import { dense } from "../harness/langs";
 
 export interface TtsChunk {
   lines: ScriptLine[];
@@ -15,7 +16,7 @@ export interface TtsChunk {
  *    (Chinese packs ~4 chars/second, so its character cap is much lower than English).
  */
 export function chunkCap(lang: Lang, charsPerMinute: number): number {
-  return Math.min(MAX_CHUNK_CHARS, Math.floor(charsPerMinute * 2.5)) || (lang === "zh" ? 600 : MAX_CHUNK_CHARS);
+  return Math.min(MAX_CHUNK_CHARS, Math.floor(charsPerMinute * 2.5)) || (dense(lang) ? 600 : MAX_CHUNK_CHARS);
 }
 
 function splitLong(line: ScriptLine, cap: number): ScriptLine[] {

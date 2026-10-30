@@ -77,7 +77,7 @@ async function spentToday(db: DB, who: string): Promise<{ all: number; mine: num
   return { all: Number(r?.all_usd ?? 0), mine: Number(r?.mine ?? 0) };
 }
 
-export type TrialKind = "llm" | "tts" | "music";
+export type TrialKind = "llm" | "tts" | "music" | "stt";
 export interface Meter {
   /** Throws TrialError once today's visitor or site cap is reached. */
   admit(): Promise<void>;
@@ -125,6 +125,7 @@ export async function trialSpend(db: DB, since: Date, until: Date) {
          coalesce(sum(usd) filter (where kind = 'llm'), 0)::float8 as llm,
          coalesce(sum(usd) filter (where kind = 'tts'), 0)::float8 as tts,
          coalesce(sum(usd) filter (where kind = 'music'), 0)::float8 as music,
+         coalesce(sum(usd) filter (where kind = 'stt'), 0)::float8 as stt,
          coalesce(sum(units) filter (where kind = 'tts'), 0)::int as tts_chars
        from trial_usage where ts >= $1 and ts < $2`,
       [since, until],
@@ -133,7 +134,7 @@ export async function trialSpend(db: DB, since: Date, until: Date) {
   ]);
   const n = (v: unknown) => Number(v ?? 0);
   return {
-    range: { usd: n(r?.usd), calls: n(r?.calls), llm: n(r?.llm), tts: n(r?.tts), music: n(r?.music), ttsChars: n(r?.tts_chars) },
+    range: { usd: n(r?.usd), calls: n(r?.calls), llm: n(r?.llm), tts: n(r?.tts), music: n(r?.music), stt: n(r?.stt), ttsChars: n(r?.tts_chars) },
     today: { usd: n(t?.usd), people: n(t?.people) },
     limits: trialLimits(),
   };

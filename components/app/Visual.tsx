@@ -53,7 +53,7 @@ export function VisualPanel({ e, visual, figures }: { e: Episode; visual: V | nu
             </figure>
           )}
           {sketch && <SketchView s={sketch} compact={Boolean(fig)} />}
-          {!fig && !sketch && (
+          {!fig && !sketch && e.script.show_notes.length > 0 && (
             <div className="visual-notes">
               <span className="eyebrow">{T("要点", "Takeaways")}</span>
               <ul>
@@ -61,6 +61,16 @@ export function VisualPanel({ e, visual, figures }: { e: Episode; visual: V | nu
                   <li key={i}>{n}</li>
                 ))}
               </ul>
+            </div>
+          )}
+          {/* The cold open plays before the source is read: say what it is, nothing more yet. */}
+          {!fig && !sketch && !e.script.show_notes.length && (
+            <div className="visual-notes">
+              <span className="eyebrow">{T("原文", "Source")}</span>
+              <p className="headline" dir="auto" style={{ margin: 0 }}>{e.sourceName}</p>
+              <span className="caption">
+                <span className="breath dim" /> {T("正在读全文，要点和图表随第 1 章出现", "Reading the whole source; takeaways and figures come with chapter 1")}
+              </span>
             </div>
           )}
         </motion.div>

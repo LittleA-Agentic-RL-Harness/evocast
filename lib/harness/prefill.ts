@@ -1,6 +1,7 @@
-import type { Lang } from "../types";
+import type { UiLang } from "../types";
 import { PERSONAS, PERSONA_IDS } from "./personas";
 import { LENSES } from "./lenses";
+import { LANGS } from "./langs";
 import type { Recipe, UIGenome } from "./ui";
 
 /** Content-aware prefill: read the start of a document and propose the episode recipe. */
@@ -10,7 +11,7 @@ export function prefillSystem(g: UIGenome): string {
 Options:
 - persona: ${PERSONA_IDS.map((id) => `${id} (${PERSONAS[id].wants})`).join("; ")}
 - style: studio (calm premium interview) | idol (sweet, bright two-host radio)
-- langs: ["zh"], ["en"] or ["zh","en"]
+- langs: one language the episode is spoken in, usually the person's interface language: ${LANGS.join(", ")}. Or two, [the person's language, the document's language], when they keep asking for both.
 - minutes: 8 (the key points) | 15 (a close reading: method and evidence) | 30 (a deep reading, section by section). Papers worth studying lean longer; news and short pieces lean 8.
 - lenses (0–3): ${LENSES.map((l) => `${l.id} = ${l.angle}`).join("; ")}
 - mode: lite | medium | heavy
@@ -21,7 +22,7 @@ ${g.prefill.rules.map((r) => `- ${r}`).join("\n")}
 - "reason": one short, friendly sentence in the person's interface language explaining the main choice (e.g. why this persona). No flattery.`;
 }
 
-export function prefillUser(head: string, title: string, portrait: string, recent: Recipe[], uiLang: Lang): string {
+export function prefillUser(head: string, title: string, portrait: string, recent: Recipe[], uiLang: UiLang): string {
   return `Interface language: ${uiLang === "zh" ? "Chinese" : "English"}
 
 <person>
@@ -54,7 +55,7 @@ export function topicOf(head: string): "paper" | "report" | "news" | "other" {
 }
 
 /** Keyless fallback used in demo mode and when the LLM prefill is unavailable. */
-export function heuristicRecipe(head: string, base: Recipe): { recipe: Recipe; reason: Record<Lang, string> } {
+export function heuristicRecipe(head: string, base: Recipe): { recipe: Recipe; reason: Record<UiLang, string> } {
   const lenses = KEYWORDS.filter(([re]) => re.test(head)).map(([, id]) => id).slice(0, 2);
   const academic = /abstract|arxiv|et al\.|we propose|introduction|摘要|本文提出/i.test(head);
   const business = /market|revenue|CEO|McKinsey|survey|report|市场|营收|研报|白皮书/i.test(head);
@@ -82,7 +83,7 @@ Principles (Apple-like restraint):
 You return a full replacement for: prefill_rules (≤ 6 concise rules for the content-aware prefiller, in English), tone, shortcuts (each with a short label in the person's interface language and a full recipe), and disclosure thresholds (episodes before showing: listen, tune, you, evolve). Change only what the evidence supports; otherwise keep current values.`;
 }
 
-export function uiPlannerUser(g: UIGenome, stats: string, portrait: string, sessions: string, uiLang: Lang): string {
+export function uiPlannerUser(g: UIGenome, stats: string, portrait: string, sessions: string, uiLang: UiLang): string {
   return `Interface language: ${uiLang === "zh" ? "Chinese" : "English"}
 
 <current_interface_genome>

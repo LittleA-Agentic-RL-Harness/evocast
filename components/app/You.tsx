@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
 import { Button, Disclosure, MenuItem, Popover, Reveal, Segmented, fade } from "../ui/kit";
 import { Wand, Xmark } from "../ui/icons";
-import type { Lang, Mode } from "@/lib/types";
+import type { Mode, UiLang } from "@/lib/types";
 import { buildPortrait, FILLED, portraitCompleteness, type Piece } from "@/lib/harness/portrait";
 import { DEFAULT_RECIPE, prefillHitRate, replayHitRate } from "@/lib/harness/ui";
 import { diffHarness, SEEDS } from "@/lib/harness/genome";
@@ -69,7 +69,7 @@ function split(value: string, max: number): string[] {
 
 const HUES = ["#5e5ce6", "#7d5cf0", "#bf5af2", "#ff5e8a", "#ff8a3d", "#30b0c7", "#0a84ff", "#34c759", "#a05cf0"];
 
-function Puzzle({ pieces, lang }: { pieces: Piece[]; lang: Lang }) {
+function Puzzle({ pieces, lang }: { pieces: Piece[]; lang: UiLang }) {
   return (
     <svg className="puzzle" viewBox="-6 -6 312 312" role="img" aria-label={lang === "zh" ? "你的画像拼图" : "Your portrait puzzle"}>
       <defs>

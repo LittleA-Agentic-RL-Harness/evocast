@@ -1,9 +1,9 @@
-import type { Lang, PersonaId } from "../types";
+import type { PersonaId, UiLang } from "../types";
 
 export interface Persona {
   id: PersonaId;
-  label: Record<Lang, string>;
-  tagline: Record<Lang, string>;
+  label: Record<UiLang, string>;
+  tagline: Record<UiLang, string>;
   /** What this listener wants out of 5 minutes. Injected verbatim into the script prompt. */
   wants: string;
   depth: "deep" | "practical" | "strategic" | "applied" | "intuitive";

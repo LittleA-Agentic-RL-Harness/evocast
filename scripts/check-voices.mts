@@ -1,7 +1,7 @@
 /**
- * Do the default voices still speak? Each style default (lib/harness/styles.ts) and each trial-shelf
- * voice (lib/tts/voices.ts) says one short word, so a voice ElevenLabs removed shows up here before
- * a listener's episode fails.
+ * Do the default voices still speak? Each style default and native default for the other languages
+ * (lib/harness/styles.ts) and each trial-shelf voice (lib/tts/voices.ts) says one short word, so a
+ * voice ElevenLabs removed shows up here before a listener's episode fails.
  *
  *   npm run check:voices
  *
@@ -11,7 +11,7 @@
  */
 import { existsSync } from "node:fs";
 import type { Lang } from "../lib/types";
-import { STYLES, STYLE_IDS } from "../lib/harness/styles";
+import { NATIVE, STYLES, STYLE_IDS } from "../lib/harness/styles";
 import { SHELF } from "../lib/tts/voices";
 import { ElevenError, textToSpeechLines } from "../lib/tts/elevenlabs";
 import { gatewaySpeechTimed } from "../lib/tts/gateway";
@@ -19,12 +19,15 @@ import { gatewaySpeechTimed } from "../lib/tts/gateway";
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 
 const MODEL = "eleven_v4";
-const WORD: Record<Lang, string> = { zh: "你好。", en: "Hi." };
+const WORD: Record<Lang, string> = { zh: "你好。", en: "Hi.", ja: "こんにちは。", ko: "안녕하세요.", es: "Hola.", fr: "Bonjour.", de: "Hallo.", pt: "Olá.", it: "Ciao.", ru: "Привет.", ar: "مرحبا.", hi: "नमस्ते।" };
 
 const voices = new Map<string, { name: string; lang: Lang; where: string }>();
 for (const style of STYLE_IDS)
   for (const lang of ["zh", "en"] as Lang[])
     for (const [speaker, v] of Object.entries(STYLES[style].voices[lang])) voices.set(v.voiceId, { name: v.name, lang, where: `${style}.${lang}.${speaker}` });
+for (const [lang, styles] of Object.entries(NATIVE))
+  for (const [style, seats] of Object.entries(styles ?? {}))
+    for (const [speaker, v] of Object.entries(seats ?? {})) if (v && !voices.has(v.voiceId)) voices.set(v.voiceId, { name: v.name, lang: lang as Lang, where: `${style}.${lang}.${speaker}` });
 for (const v of SHELF) if (!voices.has(v.voice_id)) voices.set(v.voice_id, { name: v.name, lang: v.labels!.language as Lang, where: "shelf" });
 
 const gateway = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
