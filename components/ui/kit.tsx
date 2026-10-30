@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Xmark } from "./icons";
 
@@ -50,45 +50,79 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
 }
 
 /** Anchored popover menu (closes on outside click / Escape). */
+/**
+ * A menu under (or, near the bottom of the screen, over) its trigger. It is drawn at the top of the
+ * page, positioned against the trigger, so no card, scroller or sheet can clip it or paint over it;
+ * it stays inside the screen and no taller than the room there is.
+ */
 export function Popover({ trigger, children, align = "start", width }: { trigger: (open: boolean, toggle: () => void) => ReactNode; children: (close: () => void) => ReactNode; align?: "start" | "end" | "center"; width?: number }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CSSProperties | null>(null);
   const close = useCallback(() => setOpen(false), []);
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    // Pointer events: iOS sends no mouse events for taps on plain backgrounds.
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!ref.current?.contains(t) && !menu.current?.contains(t)) setOpen(false);
+    };
     // Escape closes the menu only, not the sheet or dialog it sits in: catch it first and stop it there.
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopPropagation();
       setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown);
     window.addEventListener("keydown", onKey, true);
     return () => {
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown);
       window.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
-  const pos = align === "end" ? { right: 0 } : align === "center" ? { left: "50%", translate: "-50% 0" } : { left: 0 };
+  useLayoutEffect(() => {
+    if (!open) return setPlace(null);
+    const fit = () => {
+      const t = ref.current?.getBoundingClientRect();
+      const m = menu.current;
+      if (!t || !m) return;
+      const vv = window.visualViewport;
+      const vw = vv?.width ?? innerWidth;
+      const vh = vv?.height ?? innerHeight;
+      const top = vv?.offsetTop ?? 0;
+      const w = Math.min(m.offsetWidth, vw - 24);
+      const below = vh + top - t.bottom - 14;
+      const above = t.top - top - 14;
+      const need = m.scrollHeight;
+      const up = need > below && above > below;
+      const x = align === "end" ? t.right - w : align === "center" ? t.left + t.width / 2 - w / 2 : t.left;
+      const left = Math.max(12, Math.min(x, vw - 12 - w));
+      setPlace({ position: "fixed", left, ...(up ? { bottom: innerHeight - t.top + 6 } : { top: t.bottom + 6 }), maxHeight: Math.max(150, Math.min(need, up ? above : below)) });
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    window.visualViewport?.addEventListener("resize", fit);
+    // The trigger can move under a scrolling page or sheet: follow it.
+    window.addEventListener("scroll", fit, true);
+    return () => {
+      window.removeEventListener("resize", fit);
+      window.visualViewport?.removeEventListener("resize", fit);
+      window.removeEventListener("scroll", fit, true);
+    };
+  }, [open, align]);
   return (
     <span ref={ref} style={{ position: "relative", display: "inline-block" }}>
       {trigger(open, () => setOpen((o) => !o))}
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            className="menu"
-            role="menu"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={fade}
-            style={{ top: "calc(100% + 6px)", width, ...pos }}
-          >
-            {children(close)}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <Portal>
+        <AnimatePresence>
+          {open && (
+            <motion.div ref={menu} className="menu" role="menu" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} style={{ width, ...(place ?? { position: "fixed", left: 0, top: 0, visibility: "hidden" }) }}>
+              {children(close)}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Portal>
     </span>
   );
 }
@@ -117,11 +151,13 @@ export function Sheet({ open, onClose, children, label, className }: { open: boo
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
+    // Both, for Safari: the page behind a sheet doesn't scroll under a finger.
+    const prev = [document.body.style.overflow, document.documentElement.style.overflow];
     document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      [document.body.style.overflow, document.documentElement.style.overflow] = prev;
     };
   }, [open, onClose]);
   return (

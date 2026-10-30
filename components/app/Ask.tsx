@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./context";
 import { Hand } from "../ui/icons";
-import { ApiError, keyMessage } from "@/lib/client/api";
-import { askHosts, canRecord, hear, record, type Recording } from "@/lib/client/ask";
+import { ApiError, isNetworkError, keyMessage } from "@/lib/client/api";
+import { askHosts, canRecord, hear, meterContext, record, type Recording } from "@/lib/client/ask";
 import { addAsk } from "@/lib/client/store";
 import { track } from "@/lib/client/track";
 import { stripTags } from "@/lib/tts/tags";
@@ -68,12 +68,16 @@ export function useRaiseHand(e: Episode | null, active: number, lineEnd: number)
           ? T("今天的免费额度用完了。", "Today's free allowance is used up.")
           : err instanceof DOMException && err.name === "NotAllowedError"
             ? T("没有麦克风权限，可以打字问。", "No microphone access; you can type the question.")
-            : keyMessage((err as Error).message, T),
+            : err instanceof DOMException && (err.name === "NotFoundError" || err.name === "NotReadableError")
+              ? T("没找到能用的麦克风，可以打字问。", "No microphone available; you can type the question.")
+              : isNetworkError(err)
+                ? T("网络断了一下，再问一次？", "The connection dropped. Ask again?")
+                : keyMessage((err as Error).message, T),
     );
-    if (code === "no_stt" || code === "missing_permissions" || (err instanceof DOMException && err.name === "NotAllowedError")) setTyping(true);
+    if (code === "no_stt" || code === "missing_permissions" || (err instanceof DOMException && /NotAllowed|NotFound|NotReadable|Security/.test(err.name))) setTyping(true);
   };
 
-  async function run(typed?: string) {
+  async function run(typed?: string, ctx: AudioContext | null = null) {
     if (!e) return;
     setError(null);
     const at = active;
@@ -88,7 +92,7 @@ export function useRaiseHand(e: Episode | null, active: number, lineEnd: number)
         setPhase("listening");
         rec.current = await record((level) => {
           if (ring.current) ring.current.style.opacity = String(0.3 + 0.7 * level);
-        });
+        }, ctx);
         const { audio, spoke } = await rec.current.done;
         rec.current = null;
         if (ctl.signal.aborted) return;
@@ -147,9 +151,10 @@ export function useRaiseHand(e: Episode | null, active: number, lineEnd: number)
     return () => clearTimeout(t);
   }, [error, typing]);
 
+  const all = useMemo(() => (current ? [...asks, current] : asks), [asks, current]);
   return {
     phase,
-    asks: current ? [...asks, current] : asks,
+    asks: all,
     current,
     typing,
     error,
@@ -166,7 +171,7 @@ export function useRaiseHand(e: Episode | null, active: number, lineEnd: number)
       if (phase !== "idle") return;
       if (!voice) return setTyping(true);
       aside.prime();
-      void run();
+      void run(undefined, meterContext());
     },
     type: (open) => {
       setError(null);
@@ -208,6 +213,16 @@ export function HandButton({ hand }: { hand: RaiseHand }) {
       }}
       onPointerUp={() => timer.current && clearTimeout(timer.current)}
       onPointerLeave={() => timer.current && clearTimeout(timer.current)}
+      onPointerCancel={() => timer.current && clearTimeout(timer.current)}
+      // A long press is ours (it types): no context menu, no text selection.
+      onContextMenu={(ev) => ev.preventDefault()}
+      onKeyDown={(ev) => {
+        // From the keyboard: Shift+Enter types the question.
+        if (ev.key === "Enter" && ev.shiftKey) {
+          ev.preventDefault();
+          if (!busy) hand.type(true);
+        }
+      }}
       onClick={() => {
         if (long.current) return;
         hand.tap();

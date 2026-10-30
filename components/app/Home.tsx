@@ -19,12 +19,11 @@ import { estimateTokens } from "@/lib/ingest/clean";
 import { ACCEPT, combine, htmlToText, type Source, type SourceDoc } from "@/lib/ingest/extract";
 import { parseLinks, pickedFromDrop, publicUrl, readLinks, readPicked, type LinkError, type Picked } from "@/lib/client/files";
 import { track } from "@/lib/client/track";
-import { ApiError, getJSON, getTrial, keyHeaders, keyMessage, postJSON, type Trial } from "@/lib/client/api";
+import { isNetworkError, ApiError, getJSON, getTrial, keyHeaders, keyMessage, postJSON, type Trial } from "@/lib/client/api";
 import { topicOf } from "@/lib/harness/prefill";
 import { isFreeTier, previewIn } from "@/lib/tts/voices";
 import type { SharedVoice, Topic } from "@/lib/tts/elevenlabs";
 import { effectiveTtsModel, generateEpisodes, seatVoices, voiceLine, type Progress } from "@/lib/client/pipeline";
-import { LiveAudio } from "@/lib/client/live";
 import { extractFigures, type Figure } from "@/lib/client/figures";
 import { addSession, getActive, getEpisode, getHarness, newId, saveEpisode, saveProfile, type Settings } from "@/lib/client/store";
 import { autoTunePrefill, checkInterfaceGuard } from "@/lib/client/evolution";
@@ -279,6 +278,7 @@ export default function Home() {
     const t0 = Date.now();
     let stage = "brief";
     let heard = false;
+    const hold = holdOn();
     setRun({ started: t0, progress: null, error: null, draft: null });
     track("generate_start", {
       persona: recipe.persona,
@@ -327,15 +327,11 @@ export default function Home() {
           if (d.episode.lang === recipe.langs[0]) setRun((r) => r && { ...r, draft: d });
           liveDraft(d);
         },
-        // Where the browser can play a growing stream, listening starts after the first chapter.
-        ...(LiveAudio.supported()
-          ? {
-              onAudio: (bytes: Uint8Array, seconds: number, d: Parameters<typeof liveAudio>[2]) => {
-                heard = true;
-                liveAudio(bytes, seconds, d);
-              },
-            }
-          : {}),
+        // Listening starts within seconds: streamed where the browser can, else from a growing file.
+        onAudio: (bytes: Uint8Array, seconds: number, d: Parameters<typeof liveAudio>[2]) => {
+          heard = true;
+          liveAudio(bytes, seconds, d);
+        },
         onSaved: (e) => liveEnd(e),
       });
       track("generate_ok", { episodes: eps.length, seconds: Math.round(eps.reduce((n, e) => n + e.durationSec, 0)), ms: Date.now() - t0, mode: recipe.mode, persona: recipe.persona, live: heard, first_ms: eps[0]?.metrics.latencyMs.firstAudio ?? null, wait_ms: heard ? liveWaited() : null });
@@ -378,10 +374,13 @@ export default function Home() {
                 ? T("免费的 ElevenLabs 套餐不能通过 API 使用声音库声音，而你的账户里还没有能用的声音。在设置 → 声音里一键设计两位主播（所有套餐可用）。", "Free ElevenLabs plans can't use Voice Library voices through the API, and your account has no voice to use yet. Design both hosts in Settings → Voices (works on every plan).")
                 : code === "voice_not_found"
                   ? T("这期用到的声音已不可用，也没有找到替代。在设置 → 声音里换一个再试。", "A voice in this episode is no longer available and no replacement was found. Pick another in Settings → Voices and try again.")
-                  : keyMessage((e as Error).message, T);
+                  : !navigator.onLine || isNetworkError(e)
+                    ? T("网络断了一下。连上以后再点一次生成；同一份材料读过的部分不会重新付费。", "The connection dropped. Once you're back online, press Create again; what was already read isn't paid for twice.")
+                    : keyMessage((e as Error).message, T);
       setRun((r) => r && { ...r, progress: null, draft: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     } finally {
+      hold();
       cancel.current = null;
     }
   }
@@ -416,7 +415,7 @@ export default function Home() {
       {generating && run ? (
         <div className="stack-lg">
           <div className="card stack">
-            {listening && run.draft ? <LiveCard run={run} onOpen={() => setSheet(true)} /> : <Steps run={run} live={LiveAudio.supported()} />}
+            {listening && run.draft ? <LiveCard run={run} onOpen={() => setSheet(true)} /> : <Steps run={run} live />}
           </div>
           <div className="center">
             <Button variant="plain" data-track="cancel" onClick={() => cancel.current?.()}>
@@ -832,6 +831,39 @@ function Tune({ recipe, setRecipe, defaultOpen }: { recipe: Recipe; setRecipe: (
       </div>
     </Disclosure>
   );
+}
+
+/**
+ * While an episode is made: the screen stays on (a phone that locks can stall the run), and closing
+ * the tab asks first. Returns the release.
+ */
+function holdOn(): () => void {
+  let lock: WakeLockSentinel | null = null;
+  let done = false;
+  const take = () => {
+    if (done || document.visibilityState !== "visible" || !("wakeLock" in navigator)) return;
+    navigator.wakeLock
+      .request("screen")
+      .then((l) => {
+        if (done) void l.release();
+        else lock = l;
+      })
+      .catch(() => undefined);
+  };
+  const ask = (e: BeforeUnloadEvent) => {
+    e.preventDefault();
+    e.returnValue = "";
+  };
+  take();
+  // The lock is dropped whenever the page is hidden: take it again on return.
+  document.addEventListener("visibilitychange", take);
+  window.addEventListener("beforeunload", ask);
+  return () => {
+    done = true;
+    void lock?.release().catch(() => undefined);
+    document.removeEventListener("visibilitychange", take);
+    window.removeEventListener("beforeunload", ask);
+  };
 }
 
 /** Ticks while something is running, so time-based copy and the progress bar keep moving. */

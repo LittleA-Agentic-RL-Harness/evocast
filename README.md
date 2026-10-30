@@ -114,7 +114,7 @@ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design notes and rese
 
 ## Quick start
 
-**Use it** — open [evocast.vercel.app](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*.
+**Use it** — open [evocast.vercel.app](https://evocast.vercel.app) and try it free with no keys, or paste your own two. Install it as an app: Safari → *File → Add to Dock*, or Chrome/Edge → *Install*. Works in Chrome, Edge, Safari (macOS and iOS 16.4+) and Firefox, from a 320 px phone, upright or on its side, to a 2560 px display; every screen is checked at those sizes on each engine.
 
 **Deploy your own** — one click, no environment variables needed (everyone brings their own keys). Add Neon from the Vercel Marketplace to turn on analytics, the admin console and the free trial; [Operations](docs/OPERATIONS.md) covers costs and limits.
 

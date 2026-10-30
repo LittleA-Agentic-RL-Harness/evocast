@@ -107,11 +107,15 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scrollbar-gutter: stable; }
+/* Japanese and Korean episodes in their own glyphs (Chinese fonts draw shared characters differently). */
+:lang(ja) { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", Meiryo, "Noto Sans JP", "Noto Sans CJK JP", sans-serif; }
+:lang(ko) { font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Noto Sans CJK KR", sans-serif; }
 body {
   background: var(--bg);
   color: var(--label);
-  font: 400 var(--t0) / 1.47 -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Helvetica Neue", "Segoe UI", sans-serif;
+  /* Apple, then Windows (Segoe UI with Microsoft YaHei for Chinese), Android and Linux (Roboto, Noto CJK). */
+  font: 400 var(--t0) / 1.47 -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Helvetica Neue", Arial, sans-serif;
   letter-spacing: -0.011em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -120,6 +124,8 @@ body {
 }
 button, input, textarea, select { font: inherit; color: inherit; letter-spacing: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
+/* No double-tap zoom and no tap delay on controls. */
+button, a, input, [role=button], [role=switch] { touch-action: manipulation; }
 ::selection { background: var(--accent-soft); }
 :focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; border-radius: 6px; }
 
@@ -164,17 +170,17 @@ button { -webkit-tap-highlight-color: transparent; }
 
 /* ---------------------------------------------------------------- controls */
 .btn { text-decoration: none; position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; cursor: pointer; border-radius: 999px; padding: 8px 17px; font-size: 15px; font-weight: 550; background: var(--fill); color: var(--label); white-space: nowrap; }
-.btn:hover:not(:disabled) { background: var(--fill-strong); }
+@media (hover: hover) { .btn:hover:not(:disabled) { background: var(--fill-strong); } }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); }
-.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+@media (hover: hover) { .btn.primary:hover:not(:disabled) { background: var(--accent-hover); } }
 .btn.large { padding: 13px 34px; font-size: 17px; font-weight: 600; }
 .btn.small { padding: 5px 12px; font-size: 13px; }
 .btn.plain { background: transparent; color: var(--accent); padding-left: 8px; padding-right: 8px; }
-.btn.plain:hover:not(:disabled) { background: var(--accent-soft); }
+@media (hover: hover) { .btn.plain:hover:not(:disabled) { background: var(--accent-soft); } }
 .btn.danger { color: var(--red); }
 .icon-btn { width: 34px; height: 34px; border-radius: 999px; border: 0; background: transparent; display: inline-grid; place-items: center; color: var(--label-2); cursor: pointer; position: relative; }
-.icon-btn:hover { background: var(--fill); color: var(--label); }
+@media (hover: hover) { .icon-btn:hover { background: var(--fill); color: var(--label); } }
 .icon-btn.on { color: var(--accent); }
 
 .field { width: 100%; border: 0; outline: none; background: var(--fill); border-radius: var(--r2); padding: 11px 13px; font-size: 15px; }
@@ -210,17 +216,21 @@ textarea.field { resize: vertical; min-height: 89px; line-height: 1.5; }
 .paste input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 15px; padding: 6px 0; }
 
 /* ---------------------------------------------------------------- recipe sentence */
-.recipe .menu { font-size: 14px; font-weight: 400; letter-spacing: -0.01em; line-height: 1.4; }
+.menu { font-size: 14px; font-weight: 400; letter-spacing: -0.01em; line-height: 1.4; }
 .recipe { font-size: clamp(var(--t1), 3vw, var(--t2)); line-height: 1.55; font-weight: 600; letter-spacing: -0.022em; text-wrap: balance; }
 .token { display: inline-flex; align-items: center; gap: 3px; border: 0; cursor: pointer; font: inherit; letter-spacing: inherit; color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 0 10px 1px; margin: 2px 1px; }
 .token svg { opacity: .55; }
 .reason { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--label-2); }
 
 /* ---------------------------------------------------------------- menus & sheets */
-.menu { position: absolute; z-index: 60; min-width: 220px; max-width: min(320px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow-y: auto; padding: 5px; border-radius: var(--r2); background: var(--material-thick); backdrop-filter: saturate(180%) blur(30px); -webkit-backdrop-filter: saturate(180%) blur(30px); box-shadow: var(--shadow-3), 0 0 0 0.5px var(--separator-strong); }
+.menu { position: fixed; z-index: 80; min-width: 220px; max-width: min(320px, calc(100vw - 32px)); max-height: min(62vh, 520px); overflow-y: auto; padding: 5px; border-radius: var(--r2); background: var(--material-thick); backdrop-filter: saturate(180%) blur(30px); -webkit-backdrop-filter: saturate(180%) blur(30px); box-shadow: var(--shadow-3), 0 0 0 0.5px var(--separator-strong); }
 .menu-item { display: flex; align-items: flex-start; gap: 9px; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 8px; padding: 7px 10px; cursor: pointer; font-size: 14px; }
-.menu-item:hover, .menu-item:focus-visible { background: var(--accent); color: var(--accent-ink); outline: none; }
-.menu-item:hover .menu-sub, .menu-item:focus-visible .menu-sub { color: color-mix(in srgb, var(--accent-ink) 78%, transparent); }
+.menu-item:focus-visible { background: var(--accent); color: var(--accent-ink); outline: none; }
+.menu-item:focus-visible .menu-sub { color: color-mix(in srgb, var(--accent-ink) 78%, transparent); }
+@media (hover: hover) {
+  .menu-item:hover { background: var(--accent); color: var(--accent-ink); }
+  .menu-item:hover .menu-sub { color: color-mix(in srgb, var(--accent-ink) 78%, transparent); }
+}
 .menu-item .check { width: 14px; flex: none; padding-top: 2px; }
 .menu-item:disabled { opacity: .45; cursor: default; background: transparent; color: inherit; }
 .menu-label { padding: 6px 10px 2px 33px; font-size: 11.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--label-3); }
@@ -414,6 +424,10 @@ details > summary::-webkit-details-marker { display: none; }
 .avatar { width: 38px; height: 38px; border-radius: 999px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 650; font-size: 14px; }
 .key-status { display: flex; align-items: center; gap: 8px; font-size: 14px; min-height: 22px; }
 
+/* Without background blur, frosted surfaces would show the page through them: make them solid. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .bar, .menu, .mini { background: var(--bg-elevated); }
+}
 @media (prefers-reduced-transparency: reduce) {
   .bar, .menu, .mini { background: var(--bg-elevated); backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
@@ -427,6 +441,8 @@ details > summary::-webkit-details-marker { display: none; }
 html.desktop .bar { -webkit-app-region: drag; app-region: drag; }
 html.desktop .bar button, html.desktop .bar a { -webkit-app-region: no-drag; app-region: no-drag; }
 html.desktop .bar-inner { padding-left: 84px; max-width: none; }
+/* A narrow desktop window: the full-screen player starts below the traffic lights. */
+@media (max-width: 760px), (max-height: 520px) and (orientation: landscape) { html.desktop .np { padding-top: 44px; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
@@ -435,6 +451,72 @@ html.desktop .bar-inner { padding-left: 84px; max-width: none; }
   .page { padding-top: calc(52px + var(--s5)); }
   .nav button { padding: 5px 11px; }
   .wordmark span { display: none; }
+}
+
+/* ---------------------------------------------------------------- every screen
+   The notch, the home bar and rounded corners (an iPhone app from the home screen draws under them),
+   short screens (a phone on its side, a small laptop window), and nothing scrolling the page behind
+   a sheet or a menu. */
+.bar { height: calc(52px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); }
+.bar-inner { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.page { padding: calc(52px + var(--s6) + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(var(--s7) + 64px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+@media (max-width: 640px) { .page { padding-top: calc(52px + var(--s5) + env(safe-area-inset-top)); } }
+.mini { bottom: calc(16px + env(safe-area-inset-bottom)); }
+.sheet-body, .t-window, .menu, .np-side, .visual-notes { overscroll-behavior: contain; }
+.np-main, .np-read { overflow: hidden; }
+/* The takeaways start at the top when they don't fit, never cut off above. */
+.visual-notes { align-content: start; align-content: safe center; overflow-y: auto; scrollbar-width: none; max-height: 100%; }
+.visual-notes::-webkit-scrollbar { display: none; }
+@media (max-width: 760px) {
+  .sheet.player { top: var(--vvt, 0px); bottom: auto; height: var(--vvh, 100dvh); }
+  .np { padding: calc(var(--s3) + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(var(--s3) + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+}
+/* Short phones: the transcript keeps room to read. */
+@media (max-width: 760px) and (max-height: 760px) { .visual { max-height: 27dvh; } }
+@media (max-width: 760px) and (max-height: 620px) {
+  .visual { max-height: 21dvh; }
+  .visual-notes ul { font-size: 14px; gap: 4px; }
+  .play-big { width: 54px; height: 54px; }
+  .np-foot .transport { gap: var(--s3); }
+}
+/* A phone on its side: the visual beside the transcript, a compact header and transport. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .sheet.player { width: 100%; top: var(--vvt, 0px); bottom: auto; height: var(--vvh, 100dvh); border-radius: 0; }
+  .np { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "main" "foot"; padding: calc(6px + env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .np-side { display: none; }
+  .np-head { padding-bottom: 6px; }
+  .np-main { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); grid-template-rows: minmax(0, 1fr); }
+  .visual { max-height: none; }
+  .visual-in { padding: var(--s3); gap: var(--s3); }
+  .visual-in.both { grid-template-columns: 1fr; }
+  .visual-in.both .sketch { display: none; }
+  .t-window { padding: 12px 0; }
+  .np-foot { padding-top: 4px; }
+  .play-big { width: 50px; height: 50px; }
+  .np-rate-mobile { display: block; margin: -10px 0; }
+  .np-chips-mobile { display: block; padding-bottom: 4px; }
+  .np-chips-mobile .row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .t-chapter, .t-wait { padding-left: 10px; }
+  .page { padding-top: calc(52px + var(--s4) + env(safe-area-inset-top)); }
+}
+/* A short laptop window: artwork sized to the height, the transcript gets the room. */
+@media (min-width: 761px) and (min-height: 521px) and (max-height: 820px) {
+  .np-art { width: min(100%, 25dvh); }
+  .np-main { grid-template-rows: minmax(0, 0.8fr) minmax(0, 1fr); }
+  .np-side { gap: var(--s2); }
+}
+/* A big display: a bigger player, slightly larger reading text. */
+@media (min-width: 1600px) and (min-height: 1050px) {
+  .sheet.player { width: min(1400px, 100%); height: min(92dvh, 1120px); }
+  .np { grid-template-columns: 300px minmax(0, 1fr); }
+  .t-line { font-size: 16px; }
+}
+/* Touch: fields at 16px so Safari doesn't zoom in on them, and every target a finger can hit. */
+@media (pointer: coarse) {
+  .field, .paste input, input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), textarea, select { font-size: 16px; }
+  .wordmark { min-height: 44px; min-width: 44px; justify-content: center; }
+  .menu-item { min-height: 44px; align-items: center; }
+  .chapters button { min-height: 40px; }
 }
 
 /* ---------------------------------------------------------------- admin (same tokens, wider canvas) */

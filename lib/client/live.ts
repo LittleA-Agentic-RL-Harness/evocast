@@ -111,3 +111,94 @@ export class LiveAudio {
     if (!this.queue.length && this.closing) this.ms.endOfStream();
   };
 }
+
+/**
+ * Live playback for browsers that can't stream MP3 into a MediaSource (iPhones before iOS 17.1,
+ * some others): what has been voiced plays as one file, and shortly before playback reaches its end
+ * the file is rebuilt with everything voiced since and resumed at the same moment. A brief seam now
+ * and then, instead of waiting for the whole episode.
+ */
+export class FileAudio {
+  private parts: Uint8Array[] = [];
+  private secs = 0;
+  private loaded = { parts: 0, secs: 0 };
+  private url: string | null = null;
+  private swapping = false;
+  /** Playing, or meant to be: it starts on its own, and a rebuild keeps playing what was playing. */
+  private wanted = true;
+  queuedSec = 0;
+
+  constructor(private el: HTMLAudioElement) {
+    el.addEventListener("timeupdate", this.check);
+    el.addEventListener("ended", this.check);
+    el.addEventListener("pause", this.onPause);
+    el.addEventListener("play", this.onPlay);
+  }
+
+  append(bytes: Uint8Array, seconds: number) {
+    this.parts.push(bytes);
+    this.secs += seconds;
+    this.queuedSec = this.secs;
+    if (!this.loaded.parts) this.load();
+    else this.check();
+  }
+
+  end() {
+    this.check();
+  }
+
+  has(t: number): boolean {
+    return t <= this.loaded.secs;
+  }
+
+  get edge(): number {
+    return this.loaded.secs;
+  }
+
+  detach() {
+    this.el.removeEventListener("timeupdate", this.check);
+    this.el.removeEventListener("ended", this.check);
+    this.el.removeEventListener("pause", this.onPause);
+    this.el.removeEventListener("play", this.onPlay);
+    if (this.url) URL.revokeObjectURL(this.url);
+    this.parts = [];
+  }
+
+  // A pause at the end of the file is the file running out, not the listener.
+  private onPause = () => {
+    if (!this.swapping && !this.el.ended) this.wanted = false;
+  };
+  private onPlay = () => {
+    this.wanted = true;
+  };
+
+  private check = () => {
+    if (this.swapping || this.loaded.parts === this.parts.length) return;
+    if (this.el.ended || this.loaded.secs - this.el.currentTime < 2.5) this.load();
+  };
+
+  private load() {
+    this.swapping = true;
+    const at = this.el.ended ? this.loaded.secs : this.el.currentTime;
+    const old = this.url;
+    this.url = URL.createObjectURL(new Blob(this.parts as BlobPart[], { type: "audio/mpeg" }));
+    this.loaded = { parts: this.parts.length, secs: this.secs };
+    this.el.addEventListener(
+      "loadedmetadata",
+      () => {
+        if (at > 0) this.el.currentTime = Math.min(at, this.el.duration || at);
+        if (this.wanted) this.el.play().catch(() => undefined);
+        if (old) URL.revokeObjectURL(old);
+        this.swapping = false;
+        this.check();
+      },
+      { once: true },
+    );
+    this.el.src = this.url;
+  }
+}
+
+export type LiveStream = LiveAudio | FileAudio;
+
+/** The best way this browser can play an episode while it is still being voiced. */
+export const liveStream = (el: HTMLAudioElement): LiveStream => (LiveAudio.supported() ? new LiveAudio(el) : new FileAudio(el));

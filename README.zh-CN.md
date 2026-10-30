@@ -107,7 +107,7 @@ flowchart LR
 
 ## 快速开始
 
-- **直接用**：打开 [evocast.vercel.app](https://evocast.vercel.app)，不填 Key 也能免费试用，或者填上自己的两把钥匙。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。
+- **直接用**：打开 [evocast.vercel.app](https://evocast.vercel.app)，不填 Key 也能免费试用，或者填上自己的两把钥匙。想装成 App：Safari 选「文件 → 添加到程序坞」，Chrome / Edge 点「安装」。支持 Chrome、Edge、Safari（macOS 与 iOS 16.4+）和 Firefox，从 320 px 的手机（竖放或横放）到 2560 px 的显示器，每个页面都在这些尺寸和内核上检查过。
 - **一键部署自己的**：[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FLittleA-Agentic-RL-Harness%2Fevocast&project-name=evocast&repository-name=evocast)。不需要任何环境变量；在 Vercel Marketplace 加上 Neon，就会打开埋点、管理后台和免费试用，费用和上限见[运营文档](docs/OPERATIONS.zh-CN.md)。
 - **本地运行**：
 

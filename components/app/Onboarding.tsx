@@ -119,7 +119,7 @@ export default function Onboarding() {
             )}
           </motion.div>
         </AnimatePresence>
-        <a className="row" href="https://github.com/LittleA-Agentic-RL-Harness/evocast" target="_blank" rel="noreferrer" style={{ justifyContent: "center", marginTop: 55, opacity: 0.6, color: "inherit", textDecoration: "none" }}>
+        <a className="row" href="https://github.com/LittleA-Agentic-RL-Harness/evocast" target="_blank" rel="noreferrer" style={{ justifyContent: "center", marginTop: 44, minHeight: 44, opacity: 0.6, color: "inherit", textDecoration: "none" }}>
           <Mark size={18} />
           <span className="caption">{lang === "zh" ? "开源 · 由 LittleA 打造" : "Open source · made by LittleA"}</span>
         </a>

@@ -10,7 +10,20 @@ import { fastSibling } from "../tts/models";
 // episode goes on. Questions are heard by ElevenLabs Scribe and answered from the whole source.
 
 /** Whether this device can record a spoken question at all. */
-export const canRecord = () => typeof window !== "undefined" && typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+export const canRecord = () => typeof window !== "undefined" && typeof MediaRecorder !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && window.isSecureContext;
+
+/**
+ * The level meter's audio context, made inside the tap: Safari starts one made later suspended,
+ * and a suspended meter hears nothing.
+ */
+export function meterContext(): AudioContext | null {
+  const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  try {
+    return Ctx ? new Ctx() : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Quiet this long after speaking ends the question. */
 const QUIET_MS = 1200;
@@ -29,51 +42,61 @@ export interface Recording {
  * 8 s of nothing, or at 20 s. `onLevel` gets the loudness (0–1) every frame, for the ring around
  * the button.
  */
-export async function record(onLevel: (level: number) => void): Promise<Recording> {
+export async function record(onLevel: (level: number) => void, ctx: AudioContext | null = meterContext()): Promise<Recording> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  const type = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus"].find((t) => MediaRecorder.isTypeSupported(t));
+  const type = ["audio/webm;codecs=opus", "audio/mp4", "audio/webm", "audio/ogg;codecs=opus", "audio/aac"].find((t) => MediaRecorder.isTypeSupported?.(t));
   const rec = new MediaRecorder(stream, type ? { mimeType: type } : undefined);
   const chunks: Blob[] = [];
   rec.ondataavailable = (e) => {
     if (e.data.size) chunks.push(e.data);
   };
-  const ctx = new AudioContext();
-  const meter = ctx.createAnalyser();
-  meter.fftSize = 1024;
-  ctx.createMediaStreamSource(stream).connect(meter);
-  const buf = new Float32Array(meter.fftSize);
+  if (ctx?.state === "suspended") await ctx.resume().catch(() => undefined);
+  const meter = ctx?.createAnalyser();
+  if (ctx && meter) {
+    meter.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(meter);
+  }
+  const buf = new Float32Array(meter?.fftSize ?? 1024);
   const t0 = performance.now();
   let spoke = false;
+  let heardAnything = false;
   let lastVoice = t0;
-  let frame = 0;
+  let timer = 0;
   const stop = () => {
-    cancelAnimationFrame(frame);
+    clearInterval(timer);
     if (rec.state !== "inactive") rec.stop();
   };
+  // A timer, not animation frames: frames stop when the screen locks or the tab is hidden.
   const tick = () => {
-    meter.getFloatTimeDomainData(buf);
-    let sum = 0;
-    for (const v of buf) sum += v * v;
-    const rms = Math.sqrt(sum / buf.length);
+    let rms = 0;
+    if (meter) {
+      meter.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      rms = Math.sqrt(sum / buf.length);
+    }
+    if (rms > 0) heardAnything = true;
     onLevel(Math.min(1, rms * 10));
     const now = performance.now();
     if (rms > SPEECH) {
       spoke = true;
       lastVoice = now;
     }
-    if ((spoke && now - lastVoice > QUIET_MS) || (!spoke && now - t0 > 8000) || now - t0 > 20000) return stop();
-    frame = requestAnimationFrame(tick);
+    // A meter that hears nothing at all can't tell speech from quiet: wait for the tap (or 20 s).
+    const blind = !heardAnything && now - t0 > 1500;
+    if (!blind && ((spoke && now - lastVoice > QUIET_MS) || (!spoke && now - t0 > 8000))) return stop();
+    if (now - t0 > 20000) stop();
   };
   const done = new Promise<{ audio: Blob; spoke: boolean }>((resolve) => {
     rec.onstop = () => {
       stream.getTracks().forEach((t) => t.stop());
-      void ctx.close();
+      void ctx?.close().catch(() => undefined);
       onLevel(0);
-      resolve({ audio: new Blob(chunks, { type: rec.mimeType || type || "audio/webm" }), spoke });
+      resolve({ audio: new Blob(chunks, { type: rec.mimeType || type || "audio/webm" }), spoke: spoke || !heardAnything });
     };
   });
   rec.start(250);
-  frame = requestAnimationFrame(tick);
+  timer = window.setInterval(tick, 50);
   return { stop, done };
 }
 

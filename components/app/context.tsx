@@ -9,7 +9,7 @@ import { track } from "@/lib/client/track";
 import { DEFAULT_SETTINGS, getAudio, getEpisode, getProfile, getSessions, getTuneNotice, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, saveTuneNotice, type Settings, type TuneNotice } from "@/lib/client/store";
 import { checkContentGuard } from "@/lib/client/evolution";
 import { undoTuning } from "@/lib/client/autotune";
-import { LiveAudio } from "@/lib/client/live";
+import { liveStream, type LiveStream } from "@/lib/client/live";
 import type { Draft, Progress } from "@/lib/client/pipeline";
 import { silentMp3 } from "@/lib/tts/mp3";
 
@@ -123,7 +123,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [run, setRun] = useState<Run | null>(null);
   const cancel = useRef<(() => void) | null>(null);
   // The live stream, the estimated length while it grows, and the saved episode once it's done.
-  const liveRef = useRef<LiveAudio | null>(null);
+  const liveRef = useRef<LiveStream | null>(null);
   const estimate = useRef(0);
   const saved = useRef<Episode | null>(null);
   // A live episode the person switched away from keeps generating, but no longer takes over the player.
@@ -178,6 +178,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (tuning) await undoTuning(tuning);
     setTuning(null);
   }, [tuning]);
+
+  // The visible part of the screen, for full-screen sheets: on iOS the keyboard covers the page
+  // instead of resizing it, so a field near the bottom would sit under it.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement.style;
+    const set = () => {
+      root.setProperty("--vvh", `${Math.round(vv.height)}px`);
+      root.setProperty("--vvt", `${Math.round(vv.offsetTop)}px`);
+    };
+    set();
+    vv.addEventListener("resize", set);
+    vv.addEventListener("scroll", set);
+    return () => {
+      vv.removeEventListener("resize", set);
+      vv.removeEventListener("scroll", set);
+    };
+  }, []);
 
   useEffect(() => {
     setSettings(loadSettings());
@@ -311,7 +330,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         backSeeks.current = 0;
         skipped.current = 0;
         reached.current = new Set();
-        liveRef.current = new LiveAudio(a);
+        liveRef.current = liveStream(a);
         liveId.current = d.episode.id;
         waited.current = { total: 0, since: 0 };
         a.playbackRate = player.rate;
@@ -462,12 +481,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const e = player.episode;
     if (!e || !("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({ title: e.title, artist: "Evocast", album: e.sourceName });
-    navigator.mediaSession.setActionHandler("play", () => audioRef.current?.play());
-    navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
-    navigator.mediaSession.setActionHandler("seekbackward", () => seek((audioRef.current?.currentTime ?? 0) - 15));
-    navigator.mediaSession.setActionHandler("seekforward", () => seek((audioRef.current?.currentTime ?? 0) + 30));
+    const ms = navigator.mediaSession;
+    ms.metadata = new MediaMetadata({ title: e.title, artist: "Evocast", album: e.sourceName, artwork: [{ src: "/apple-icon.png", sizes: "180x180", type: "image/png" }] });
+    // A browser that lacks one of these actions throws; the others still work.
+    const on = (action: MediaSessionAction, handler: MediaSessionActionHandler) => {
+      try {
+        ms.setActionHandler(action, handler);
+      } catch {
+        /* not supported here */
+      }
+    };
+    on("play", () => void audioRef.current?.play());
+    on("pause", () => audioRef.current?.pause());
+    on("seekbackward", (d) => seek((audioRef.current?.currentTime ?? 0) - (d.seekOffset ?? 15)));
+    on("seekforward", (d) => seek((audioRef.current?.currentTime ?? 0) + (d.seekOffset ?? 30)));
+    on("seekto", (d) => d.seekTime != null && seek(d.seekTime));
   }, [player.episode, seek]);
+
+  // The lock screen's progress bar, kept true every few seconds.
+  const posAt = useRef(0);
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !navigator.mediaSession.setPositionState || !player.duration) return;
+    if (Math.abs(player.time - posAt.current) < 5 && player.time > 1) return;
+    posAt.current = player.time;
+    try {
+      navigator.mediaSession.setPositionState({ duration: player.duration, playbackRate: player.rate, position: Math.min(player.time, player.duration) });
+    } catch {
+      /* a duration still being estimated can be off by a moment */
+    }
+  }, [player.time, player.duration, player.rate]);
 
   const surfaces = useMemo(() => visibleSurfaces(ui, episodes.length, settings.showAll), [ui, episodes.length, settings.showAll]);
   const lang = settings.uiLang;
@@ -509,6 +551,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setPlayer((p) => ({ ...p, time: a.currentTime, duration: total || p.duration }));
         }}
         onEnded={() => {
+          // A live episode that runs out of voiced audio is waiting for the next chapter, not finished.
+          if (liveRef.current && player.live && !player.live.done) {
+            if (!waited.current.since) waited.current.since = Date.now();
+            setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p));
+            return;
+          }
           milestone(100);
           persistListening(true);
         }}

@@ -53,3 +53,19 @@ test("a dropped PDF plays within seconds, arrives chapter by chapter, takes a qu
 
   expect(errors).toEqual([]);
 });
+
+test("without streaming playback (older iPhones), the episode still plays while it is made", async ({ page }) => {
+  await page.addInitScript(() => {
+    // As on iOS before 17.1: no MediaSource of either kind.
+    Object.defineProperty(window, "MediaSource", { value: undefined, configurable: true });
+    Object.defineProperty(window, "ManagedMediaSource", { value: undefined, configurable: true });
+  });
+  await page.goto("/");
+  await page.locator("input[type=file]").setInputFiles({ name: "attention.pdf", mimeType: "application/pdf", buffer: tinyPdf(PAPER) });
+  await page.getByRole("main").getByRole("button", { name: "Create" }).click();
+  const player = page.getByRole("dialog", { name: "Now playing" });
+  await expect(player).toBeVisible();
+  // It plays from a growing file: time moves, and the whole episode arrives.
+  await expect.poll(() => page.evaluate(() => (document.querySelector("audio[preload=metadata]") as HTMLAudioElement | null)?.currentTime ?? 0), { timeout: 15_000 }).toBeGreaterThan(0.5);
+  await expect(player.getByText(/Checks \d+\/\d+/)).toBeVisible({ timeout: 30_000 });
+});

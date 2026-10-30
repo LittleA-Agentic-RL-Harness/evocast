@@ -25,6 +25,24 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * fetch, tried once more when the network itself failed (a phone between cells, a laptop waking up):
+ * the request never got an answer. Answers, errors included, are never retried here.
+ */
+async function send(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch (e) {
+    if (init.signal?.aborted) throw e;
+    await new Promise((r) => setTimeout(r, 900));
+    if (init.signal?.aborted) throw e;
+    return fetch(path, init);
+  }
+}
+
+/** A failure of the connection itself, as each browser words it. */
+export const isNetworkError = (e: unknown) => e instanceof TypeError && /fetch|load failed|network/i.test(e.message);
+
 async function fail(res: Response, fallback: string): Promise<never> {
   let msg = fallback;
   let code: string | undefined;
@@ -41,7 +59,7 @@ async function fail(res: Response, fallback: string): Promise<never> {
 }
 
 export async function postJSON<T>(path: string, body: unknown, headers: Record<string, string>, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
+  const res = await send(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `${path} failed (${res.status})`);
   return (await res.json()) as T;
 }
@@ -59,7 +77,7 @@ export async function postStream<T>(
   signal?: AbortSignal,
   onEvent?: (event: Record<string, unknown>) => void,
 ): Promise<T> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson", ...headers }, body: JSON.stringify(body), signal });
+  const res = await send(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `${path} failed (${res.status})`);
   if (!res.body || !(res.headers.get("content-type") ?? "").includes("ndjson")) return (await res.json()) as T;
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -83,13 +101,13 @@ export async function postStream<T>(
 }
 
 export async function postAudio(path: string, body: unknown, headers: Record<string, string>, signal?: AbortSignal): Promise<Uint8Array> {
-  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
+  const res = await send(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `TTS failed (${res.status})`);
   return new Uint8Array(await res.arrayBuffer());
 }
 
 export async function getJSON<T>(path: string, headers: Record<string, string>): Promise<T> {
-  const res = await fetch(path, { headers });
+  const res = await send(path, { headers });
   const body = (await res.json()) as T & { error?: string; code?: string };
   if (!res.ok) throw new ApiError(body.error ?? `${path} failed (${res.status})`, body.code);
   return body;
