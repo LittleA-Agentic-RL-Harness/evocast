@@ -3,7 +3,7 @@
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
-import { Button, Disclosure, Reveal, Segmented, fade } from "../ui/kit";
+import { Button, Disclosure, MenuItem, Popover, Reveal, Segmented, fade } from "../ui/kit";
 import { Wand, Xmark } from "../ui/icons";
 import type { Lang, Mode } from "@/lib/types";
 import { buildPortrait, FILLED, portraitCompleteness, type Piece } from "@/lib/harness/portrait";
@@ -11,7 +11,8 @@ import { DEFAULT_RECIPE, prefillHitRate, replayHitRate } from "@/lib/harness/ui"
 import { diffHarness, SEEDS } from "@/lib/harness/genome";
 import { modelInfo } from "@/lib/tts/models";
 import { estimateEpochUsd, runEpoch } from "@/lib/client/evolution";
-import { getActive, getEvolutionLog, listHarnesses, saveProfile, setActive, type ActiveSet, type EvolutionLogEntry, type HarnessRecord } from "@/lib/client/store";
+import { canAutoTune, DEFAULT_TUNE_BUDGET, spentThisWeek } from "@/lib/harness/autotune";
+import { getActive, getEvolutionLog, getTuneSpend, listHarnesses, saveProfile, setActive, type ActiveSet, type EvolutionLogEntry, type HarnessRecord } from "@/lib/client/store";
 import { downloadBlob } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
 
@@ -121,7 +122,7 @@ function Puzzle({ pieces, lang }: { pieces: Piece[]; lang: Lang }) {
 // ------------------------------------------------------------------ page
 
 export default function You() {
-  const { T, lang, episodes, sessions, profile, ui, surfaces, settings, refresh } = useApp();
+  const { T, lang, episodes, sessions, profile, ui, settings, refresh } = useApp();
   const pieces = buildPortrait(episodes, sessions, profile);
   const done = pieces.filter((p) => p.confidence >= FILLED).length;
   const fallback = DEFAULT_RECIPE(lang);
@@ -191,14 +192,54 @@ export default function You() {
         </div>
       </section>
 
-      {surfaces.evolve ? <Engine /> : (
-        <p className="hint center">{T(`再做 ${Math.max(0, ui.disclosure.evolve - episodes.length)} 期，进化引擎就会出现在这里。`, `${Math.max(0, ui.disclosure.evolve - episodes.length)} more episode(s) and the evolution engine appears here.`)}</p>
-      )}
+      <TuneLine />
+      {settings.showAll && <Engine />}
     </div>
   );
 }
 
 // ------------------------------------------------------------------ evolution engine
+
+const BUDGETS = [0, 0.5, 1, 3];
+
+/** The one place the background tuning budget shows: what it may spend a week, and what it has. */
+function TuneLine() {
+  const { T, settings, update, go } = useApp();
+  const [spent, setSpent] = useState(0);
+  useEffect(() => {
+    getTuneSpend().then((l) => setSpent(spentThisWeek(l)), () => undefined);
+  }, []);
+  const k = settings.keys;
+  if (k.llmProvider === "hosted") {
+    return (
+      <div className="hint row center" style={{ justifyContent: "center", gap: 4 }}>
+        <span>{T("填上自己的钥匙后，它会边听边自己调优。", "With your own keys, it tunes itself as you listen.")}</span>
+        <button className="btn small plain" style={{ padding: "0 4px" }} onClick={() => go("settings")}>{T("填上钥匙", "Add keys")}</button>
+      </div>
+    );
+  }
+  if (!canAutoTune(k)) return null;
+  const weekly = settings.tuneBudget ?? DEFAULT_TUNE_BUDGET;
+  const usd = (v: number) => `$${v % 1 ? v.toFixed(2) : v}`;
+  return (
+    <div className="hint row" style={{ justifyContent: "center", gap: 4 }}>
+      <span>{weekly > 0 ? T("边听边自己调优，", "Tunes itself as you listen,") : T("后台调优已关闭，", "Background tuning is off,")}</span>
+      <Popover
+        align="center"
+        trigger={(_, toggle) => (
+          <button className="btn small plain" style={{ padding: "0 4px" }} onClick={toggle}>
+            {weekly > 0 ? T(`每周最多 ${usd(weekly)}`, `up to ${usd(weekly)} a week`) : T("打开", "turn on")}
+          </button>
+        )}
+      >
+        {(close) => BUDGETS.map((v) => (
+          <MenuItem key={v} title={v ? T(`每周 ${usd(v)}`, `${usd(v)} a week`) : T("关闭", "Off")} checked={weekly === v} onSelect={() => { update({ ...settings, tuneBudget: v }); close(); }} />
+        ))}
+      </Popover>
+      {weekly > 0 && <span>· {k.llmProvider === "mock" ? T("演示模式免费", "free in demo mode") : T(`本周已用 ${usd(spent)}`, `${usd(spent)} used this week`)}</span>}
+    </div>
+  );
+}
 
 const MODES: Mode[] = ["lite", "medium", "heavy"];
 
@@ -298,7 +339,7 @@ function Engine() {
           )}
         </div>
         )}
-        {settings.showAll && !trial && <Disclosure title={T("选项", "Options")}>
+        {!trial && <Disclosure title={T("选项", "Options")}>
           <div className="stack" style={{ gap: 10 }}>
             <div className="spread"><span className="caption">{T("广度", "Breadth")}</span><Segmented value={breadth} onChange={setBreadth} options={[{ value: "quick", label: T("快速", "Quick") }, { value: "full", label: T("完整（论文）", "Full (paper)") }]} /></div>
             <div className="spread"><span className="caption">{T("验证集", "Validation set")}</span><Segmented value={valSize} onChange={setValSize} options={[1, 2, 3].map((n) => ({ value: n, label: `${n}` }))} /></div>

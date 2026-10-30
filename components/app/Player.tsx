@@ -14,7 +14,8 @@ import { STYLES } from "@/lib/harness/styles";
 import { FEEDBACK_CHIPS, applyChip } from "@/lib/harness/profile";
 import { buildTestSuite, RULE_TESTS } from "@/lib/harness/tests";
 import { stripTags } from "@/lib/tts/tags";
-import { deleteEpisode, getAudio, getEpisode, getProfile, saveEpisode, saveProfile } from "@/lib/client/store";
+import { addTombstone, deleteEpisode, getAudio, getEpisode, getHarness, getProfile, saveEpisode, saveProfile } from "@/lib/client/store";
+import { outcomeOf } from "@/lib/harness/autotune";
 import { downloadBlob, slug, transcriptMarkdown, voiceLine } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
 
@@ -135,6 +136,18 @@ export function NowPlaying() {
     await refresh();
   }
 
+  /** Delete, but keep how it landed: an episode deleted before it was heard out is a signal. */
+  async function remove() {
+    if (!e) return;
+    // Wait for the listening save, or it could land after the delete and bring the episode back.
+    await stop();
+    const cur = (await getEpisode(e.id)) ?? e;
+    const h = await getHarness(cur.harnessId).catch(() => undefined);
+    await addTombstone({ ...outcomeOf(cur, h), deletedAt: new Date().toISOString() });
+    await deleteEpisode(e.id);
+    await refresh();
+  }
+
   const names = { A: e.style === "studio" ? T("主持", "Host") : "A", B: e.style === "studio" ? T("嘉宾", "Guest") : "B" };
   const passed = e.results.filter((r) => r.pass).length;
 
@@ -156,7 +169,7 @@ export function NowPlaying() {
                   <MenuItem title={T("下载 MP3", "Download MP3")} onSelect={async () => { const b = await getAudio(e.id); if (b) downloadBlob(b, `${slug(e.title)}.mp3`); track("download", { format: "mp3" }); close(); }} />
                   <MenuItem title={T("下载文字稿（.md）", "Download transcript (.md)")} onSelect={() => { downloadBlob(new Blob([transcriptMarkdown(e)], { type: "text/markdown" }), `${slug(e.title)}.md`); track("download", { format: "md" }); close(); }} />
                   <div className="divider" style={{ margin: "4px 6px" }} />
-                  <MenuItem title={<span style={{ color: "var(--red)" }}>{T("删除这一期", "Delete episode")}</span>} onSelect={async () => { close(); if (confirm(T("删除这一期？", "Delete this episode?"))) { stop(); await deleteEpisode(e.id); await refresh(); } }} />
+                  <MenuItem title={<span style={{ color: "var(--red)" }}>{T("删除这一期", "Delete episode")}</span>} onSelect={async () => { close(); if (confirm(T("删除这一期？", "Delete this episode?"))) await remove(); }} />
                 </>
               )}
             </Popover>
