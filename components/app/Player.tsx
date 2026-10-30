@@ -38,7 +38,7 @@ export function MiniPlayer() {
                 {e.title}
               </span>
               <span className="caption tabular">
-                {fmt(player.time)} / {fmt(player.duration || e.durationSec)}
+                {fmt(player.time)} / {fmt(e.durationSec || player.duration)}
               </span>
             </span>
           </button>
@@ -52,7 +52,7 @@ export function MiniPlayer() {
 }
 
 function Scrubber() {
-  const { player, seek } = useApp();
+  const { player, seek, skip } = useApp();
   const ref = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const dur = player.duration || player.episode?.durationSec || 1;
@@ -72,8 +72,8 @@ function Scrubber() {
         aria-valuenow={Math.round(player.time)}
         tabIndex={0}
         onKeyDown={(e) => {
-          if (e.key === "ArrowRight") seek(player.time + 5);
-          if (e.key === "ArrowLeft") seek(player.time - 5);
+          if (e.key === "ArrowRight") skip(5);
+          if (e.key === "ArrowLeft") skip(-5);
         }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -98,7 +98,7 @@ function Scrubber() {
 }
 
 export function NowPlaying() {
-  const { player, setSheet, toggle, seek, setRate, T, lang, refresh, stop } = useApp();
+  const { player, setSheet, toggle, seek, skip, setRate, T, lang, refresh, stop } = useApp();
   const e = player.episode;
   const [tab, setTab] = useState<"transcript" | "notes" | "checks">("transcript");
   const [fb, setFb] = useState<Feedback | null>(null);
@@ -193,13 +193,13 @@ export function NowPlaying() {
             </div>
             <Scrubber />
             <div className="transport">
-              <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => seek(player.time - 15)} aria-label="-15s">
+              <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => skip(-15)} aria-label="-15s">
                 <Back15 size={26} />
               </button>
               <button className="play-big" onClick={toggle} aria-label={player.playing ? T("暂停", "Pause") : T("播放", "Play")}>
                 {player.playing ? <Pause size={28} /> : <Play size={28} style={{ marginLeft: 3 }} />}
               </button>
-              <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => seek(player.time + 30)} aria-label="+30s">
+              <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => skip(30)} aria-label="+30s">
                 <Fwd30 size={26} />
               </button>
             </div>
@@ -262,7 +262,8 @@ export function NowPlaying() {
             )}
             {tab === "notes" && (
               <div className="stack">
-                <p className="headline" style={{ fontSize: 17 }}>{e.brief.one_liner}</p>
+                {/* The brief is shared by both languages: its one-liner leads only when it's in the episode's. */}
+                {/[\u3400-\u9fff]/.test(e.brief.one_liner) === (e.lang === "zh") && <p className="headline" style={{ fontSize: 17 }}>{e.brief.one_liner}</p>}
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }}>
                   {e.script.show_notes.map((n, i) => (
                     <li key={i}>{n}</li>

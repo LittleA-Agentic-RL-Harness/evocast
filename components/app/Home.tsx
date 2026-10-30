@@ -16,7 +16,7 @@ import { estimateTokens } from "@/lib/ingest/clean";
 import { ACCEPT, combine, htmlToText, type Source, type SourceDoc } from "@/lib/ingest/extract";
 import { parseLinks, pickedFromDrop, publicUrl, readLinks, readPicked, type LinkError, type Picked } from "@/lib/client/files";
 import { track } from "@/lib/client/track";
-import { ApiError, getTrial, keyHeaders, postJSON, type Trial } from "@/lib/client/api";
+import { ApiError, getTrial, keyHeaders, keyMessage, postJSON, type Trial } from "@/lib/client/api";
 import { effectiveTtsModel, generateEpisodes, seatVoices, voiceLine, type Progress } from "@/lib/client/pipeline";
 import { addSession, getActive, getHarness, newId, saveProfile, type Settings } from "@/lib/client/store";
 import { autoTunePrefill, checkInterfaceGuard } from "@/lib/client/evolution";
@@ -27,12 +27,6 @@ type Via = "file" | "link" | "paste";
 type T = (zh: string, en: string) => string;
 
 const rateLimited = (T: T) => T("请求太频繁了，等一分钟再试。", "Too many requests in a short time. Wait a minute and try again.");
-
-/** ElevenLabs keys can be limited to chosen permissions; say which one to turn on. */
-const missingPermission = (message: string, T: T) => {
-  const p = message.match(/missing the permission (\w+)/i)?.[1];
-  return p ? T(`ElevenLabs 钥匙缺少 ${p} 权限。在 elevenlabs.io/app/settings/api-keys 编辑这把钥匙打开它，或者换一把不限权限的钥匙。`, `Your ElevenLabs key is missing the ${p} permission. Turn it on at elevenlabs.io/app/settings/api-keys, or use an unrestricted key.`) : message;
-};
 
 /** Why a link couldn't be read, and what to do instead. */
 function linkMessage(err: LinkError, T: T): string {
@@ -296,7 +290,7 @@ export default function Home() {
                 ? T("免费的 ElevenLabs 套餐不能通过 API 使用声音库声音，而你的账户里还没有能用的声音。在设置 → 声音里一键设计两位主播（所有套餐可用）。", "Free ElevenLabs plans can't use Voice Library voices through the API, and your account has no voice to use yet. Design both hosts in Settings → Voices (works on every plan).")
                 : code === "voice_not_found"
                   ? T("这期用到的声音已不可用，也没有找到替代。在设置 → 声音里换一个再试。", "A voice in this episode is no longer available and no replacement was found. Pick another in Settings → Voices and try again.")
-                  : missingPermission((e as Error).message, T);
+                  : keyMessage((e as Error).message, T);
       setRun({ progress: null, error: ctrl.signal.aborted ? T("已取消", "Cancelled") : message });
       await refresh();
     }
@@ -645,8 +639,7 @@ function Stages({ progress, grade }: { progress: Progress | null; grade: boolean
                 {state === "done" ? <Check size={11} /> : state === "active" ? <span style={{ width: 6, height: 6, borderRadius: 9, background: "var(--accent-ink)" }} /> : null}
               </span>
               <span className="grow">
-                {T(s.zh, s.en)}
-                {s.key === "script" && !grade ? T("（轻快档不校验）", " (lite: no verify)") : ""}
+                {s.key === "script" && !grade ? T("为你写稿（轻快档不校验）", "Writing the script (lite skips checks)") : T(s.zh, s.en)}
               </span>
               {state === "active" && progress?.message && <span className="caption ellipsis" style={{ maxWidth: 200 }}>{progress.lang ? `${progress.lang === "zh" ? "中" : "EN"} · ` : ""}{progress.message}</span>}
             </div>

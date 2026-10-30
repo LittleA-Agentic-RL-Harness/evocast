@@ -1,4 +1,4 @@
-import { ElevenError, fillStarts, textToDialogueTimed, textToSpeechLinesTimed } from "@/lib/tts/elevenlabs";
+import { canSpeak, ElevenError, fillStarts, textToDialogueTimed, textToSpeechLinesTimed } from "@/lib/tts/elevenlabs";
 import { gatewaySpeechPrice, gatewaySpeechTimed } from "@/lib/tts/gateway";
 import { modelInfo } from "@/lib/tts/models";
 import { silentMp3 } from "@/lib/tts/mp3";
@@ -12,10 +12,17 @@ export const maxDuration = 300;
 /**
  * One chunk of script lines → { audio (base64 MP3), starts (s per line) }.
  * The browser stitches chunks and keeps exact line timings for transcript sync.
+ * { probe: true } only checks that the visitor's key may make speech (nothing is spoken or billed).
  */
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { lines: ScriptLine[]; voices: Record<Speaker, string>; model: string; lang: Lang; context?: { previous?: string; next?: string } };
+    const body = (await req.json()) as { probe?: boolean; lines: ScriptLine[]; voices: Record<Speaker, string>; model: string; lang: Lang; context?: { previous?: string; next?: string } };
+    if (body.probe) {
+      const key = isTrial(req) ? undefined : resolveElevenKey(req);
+      if (key && !(await canSpeak(key)))
+        throw new ElevenError("The API key you used is missing the permission text_to_speech to execute this operation.", 401, "missing_permissions");
+      return Response.json({ ok: true });
+    }
     const info = modelInfo(body.model);
     if (!info) throw new Error(`Unknown TTS model ${body.model}`);
     const chars = body.lines.reduce((n, l) => n + l.text.length, 0);

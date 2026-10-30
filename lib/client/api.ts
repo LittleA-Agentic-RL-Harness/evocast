@@ -53,9 +53,29 @@ export async function postAudio(path: string, body: unknown, headers: Record<str
 
 export async function getJSON<T>(path: string, headers: Record<string, string>): Promise<T> {
   const res = await fetch(path, { headers });
-  const body = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(body.error ?? `${path} failed (${res.status})`);
+  const body = (await res.json()) as T & { error?: string; code?: string };
+  if (!res.ok) throw new ApiError(body.error ?? `${path} failed (${res.status})`, body.code);
   return body;
+}
+
+// ElevenLabs' names for the permissions a key can be limited to (Settings → API keys).
+const PERMISSIONS: Record<string, string> = {
+  text_to_speech: "Text to Speech",
+  voices_read: "Voices → Read",
+  voices_write: "Voices → Write",
+  models_read: "Models → Read",
+  user_read: "User → Read",
+};
+
+/** A restricted ElevenLabs key: which permission to turn on, and where. Any other message passes through. */
+export function keyMessage(message: string, T: (zh: string, en: string) => string): string {
+  const p = message.match(/missing the permission (\w+)/i)?.[1];
+  if (!p) return message;
+  const name = PERMISSIONS[p] ?? p;
+  return T(
+    `你的 ElevenLabs 钥匙没有「${name}」权限。到 elevenlabs.io/app/settings/api-keys 编辑这把钥匙打开它，或者换一把不限权限的钥匙。`,
+    `Your ElevenLabs key doesn't have the ${name} permission. Turn it on at elevenlabs.io/app/settings/api-keys, or use a key without restrictions.`,
+  );
 }
 
 export interface Trial {

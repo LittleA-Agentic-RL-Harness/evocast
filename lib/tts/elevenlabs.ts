@@ -219,6 +219,22 @@ export interface ElevenAccount {
 export const isMissingPermission = (e: ElevenError) =>
   e.code === "missing_permissions" || e.code === "insufficient_permissions" || /missing the permission/i.test(e.message);
 
+/**
+ * Whether a key may make speech at all. ElevenLabs checks permissions before it validates the text,
+ * so an empty text answers `missing_permissions` for a key without Text to Speech and a validation
+ * error otherwise: nothing is spoken or billed.
+ */
+export async function canSpeak(key: string): Promise<boolean> {
+  try {
+    await el(key, "/v1/text-to-speech/l7kNoIfnJKPg7779LI2t", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "" }) });
+    return true;
+  } catch (e) {
+    if (!(e instanceof ElevenError)) return true;
+    if (e.code === "invalid_api_key") throw e;
+    return !isMissingPermission(e);
+  }
+}
+
 interface ElevenUser {
   first_name?: string | null;
   subscription?: { tier?: string; character_count?: number; character_limit?: number; can_use_instant_voice_cloning?: boolean };
@@ -240,7 +256,12 @@ export async function inspectAccount(key: string): Promise<ElevenAccount> {
       return null;
     }
   };
-  const [user, models] = await Promise.all([read<ElevenUser>("/v1/user"), read<{ model_id: string; can_do_text_to_speech?: boolean; requires_alpha_access?: boolean }[]>("/v1/models")]);
+  const [user, models, speaks] = await Promise.all([
+    read<ElevenUser>("/v1/user"),
+    read<{ model_id: string; can_do_text_to_speech?: boolean; requires_alpha_access?: boolean }[]>("/v1/models"),
+    canSpeak(key),
+  ]);
+  if (!speaks) missing.unshift("text_to_speech");
   // Alpha models need special access: never auto-pick one.
   const tts = models ? models.filter((m) => m.can_do_text_to_speech !== false && !m.requires_alpha_access).map((m) => m.model_id) : [...TTS_MODELS];
   const tier = user?.subscription?.tier ?? null;

@@ -21,7 +21,16 @@ export async function POST(req: Request) {
 
   if (body.kind === "elevenlabs") {
     try {
-      return Response.json({ ok: true, account: await inspectAccount(key) });
+      const account = await inspectAccount(key);
+      // A key without Text to Speech is real but can't voice a single line: say so now, not after a paid script.
+      if (account.missing.includes("text_to_speech"))
+        return Response.json({
+          ok: false,
+          code: "missing_permissions",
+          error: "it has no Text to Speech permission, so it can't make any audio. Edit it at elevenlabs.io/app/settings/api-keys and set Text to Speech to Access (and Voices to Read to change voices), or create a key without restrictions.",
+          errorZh: "它没有 Text to Speech 权限，生成不了任何声音。到 elevenlabs.io/app/settings/api-keys 编辑这把钥匙，把 Text to Speech 设为 Access（想换声音再把 Voices 设为 Read），或者新建一把不限权限的钥匙。",
+        });
+      return Response.json({ ok: true, account });
     } catch (e) {
       const status = e instanceof ElevenError ? e.status : 502;
       const errorZh = e instanceof ElevenError && e.code === "invalid_api_key" ? "钥匙无效，检查一下是否复制完整。" : undefined;

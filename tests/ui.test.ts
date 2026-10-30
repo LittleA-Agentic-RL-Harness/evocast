@@ -190,6 +190,8 @@ test("ElevenLabs: a key limited to some permissions still verifies; an invalid k
     assert.equal(a.tier, "creator");
 
     globalThis.fetch = (async (url: string) => {
+      // The key may speak: the empty-text probe gets past the permission check to text validation.
+      if (String(url).includes("/v1/text-to-speech/")) return deny(400, { type: "validation_error", code: "invalid_text", message: "Text is empty" });
       const perm = String(url).endsWith("/v1/models") ? "models_read" : "user_read";
       return deny(403, { type: "authorization_error", code: "insufficient_permissions", message: `The API key you used is missing the permission ${perm} to execute this operation.` });
     }) as typeof fetch;

@@ -7,7 +7,7 @@ import { Check, Key, Play, Pause, Sparkles } from "../ui/icons";
 import type { Lang, Speaker, StyleId } from "@/lib/types";
 import { STYLES, STYLE_IDS, type VoiceSlot } from "@/lib/harness/styles";
 import { modelInfo } from "@/lib/tts/models";
-import { getJSON, getTrial, keyHeaders, postJSON } from "@/lib/client/api";
+import { ApiError, getJSON, getTrial, keyHeaders, keyMessage, postJSON } from "@/lib/client/api";
 import { downloadBlob, freePlan, getSting, libraryOnly, seatRole, seatVoices } from "@/lib/client/pipeline";
 import { DEFAULT_SETTINGS, idb, type Settings } from "@/lib/client/store";
 import type { SharedVoice, VoiceInfo, DesignPreview } from "@/lib/tts/elevenlabs";
@@ -33,6 +33,20 @@ export default function SettingsView() {
   useEffect(() => {
     if (trial) void getTrial().then((t) => setLeft(t.available ? (t.left ?? 0) : null));
   }, [trial]);
+  // "Connected" only for a key that can actually speak (a free check: nothing is spoken).
+  const [mute, setMute] = useState(false);
+  useEffect(() => {
+    setMute(false);
+    if (!k.elevenlabsKey || trial) return;
+    let live = true;
+    postJSON("/api/tts", { probe: true }, keyHeaders(k))
+      .then(() => live && setMute(false))
+      .catch((e) => live && setMute(e instanceof ApiError && e.code === "missing_permissions"));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [k.elevenlabsKey, trial]);
   return (
     <div className="column stack-lg">
       <div className="stack" style={{ gap: 6 }}>
@@ -57,11 +71,17 @@ export default function SettingsView() {
             <Key size={18} style={{ color: "var(--label-3)" }} />
             <div className="grow">
               <div style={{ fontWeight: 550 }}>ElevenLabs</div>
-              <div className="caption">
-                {k.elevenlabsKey ? [k.elevenlabsTier, modelInfo(k.elevenlabsModel ?? "")?.label.split(" ·")[0] ?? k.elevenlabsModel ?? "Eleven v4"].filter(Boolean).join(" · ") : trial ? T("免费试用 · Eleven v4", "Free trial · Eleven v4") : T("未设置", "Not set")}
+              <div className="caption" style={mute ? { color: "var(--red)" } : undefined}>
+                {mute
+                  ? keyMessage("missing the permission text_to_speech", T)
+                  : k.elevenlabsKey
+                    ? [k.elevenlabsTier, modelInfo(k.elevenlabsModel ?? "")?.label.split(" ·")[0] ?? k.elevenlabsModel ?? "Eleven v4"].filter(Boolean).join(" · ")
+                    : trial
+                      ? T("免费试用 · Eleven v4", "Free trial · Eleven v4")
+                      : T("未设置", "Not set")}
               </div>
             </div>
-            {k.elevenlabsKey && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
+            {k.elevenlabsKey && !mute && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
           </div>
         </div>
         <div className="row">
@@ -161,6 +181,7 @@ const initials = (name: string) => name.trim().slice(0, 1).toUpperCase();
 function Sting() {
   const { T, lang, settings, update } = useApp();
   const [stingState, setStingState] = useState<"idle" | "working" | "error">("idle");
+  const [stingError, setStingError] = useState<string | null>(null);
   const [stingUrl, setStingUrl] = useState<string | null>(null);
   const headers = keyHeaders(settings.keys);
   async function previewSting(style: StyleId) {
@@ -169,7 +190,8 @@ function Sting() {
       const bytes = await getSting(style, headers, undefined, true);
       setStingUrl(URL.createObjectURL(new Blob([bytes as BlobPart], { type: "audio/mpeg" })));
       setStingState("idle");
-    } catch {
+    } catch (e) {
+      setStingError(keyMessage((e as Error).message, T));
       setStingState("error");
     }
   }
@@ -183,15 +205,15 @@ function Sting() {
         <Toggle on={Boolean(settings.sting)} onChange={(v) => update({ ...settings, sting: v })} label="sting" />
       </div>
       {settings.sting && (
-        <div className="list-row">
+        <div className="list-row" style={{ flexWrap: "wrap" }}>
           {STYLE_IDS.map((s) => (
             <Button key={s} size="small" onClick={() => previewSting(s)} disabled={stingState === "working"}>
               {T("试听", "Preview")} · {STYLES[s].label[lang]}
             </Button>
           ))}
           {stingState === "working" && <span className="caption">{T("作曲中…", "Composing…")}</span>}
-          {stingState === "error" && <span className="caption" style={{ color: "var(--red)" }}>{T("生成失败", "Failed")}</span>}
-          {stingUrl && <audio src={stingUrl} controls autoPlay style={{ height: 32 }} />}
+          {stingState === "error" && <span className="caption" style={{ color: "var(--red)" }}>{stingError || T("生成失败", "Failed")}</span>}
+          {stingUrl && <audio src={stingUrl} controls autoPlay style={{ height: 32, width: "100%" }} />}
         </div>
       )}
     </>
@@ -249,7 +271,7 @@ function Voices() {
       a[style] = { zh: seats, en: seats };
       update({ ...settings, accountVoices: a });
     } catch (e) {
-      setError((e as Error).message);
+      setError(keyMessage((e as Error).message, T));
     } finally {
       setDesigning(null);
     }
@@ -345,6 +367,7 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
   const [tab, setTab] = useState<Source>(free ? "mine" : "recommend");
   const [voices, setVoices] = useState<(SharedVoice | VoiceInfo)[]>([]);
   const [busy, setBusy] = useState(false);
+  const [designing, setDesigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   // The submitted search: "For you" shows library results for it, and recommendations when it's empty.
@@ -383,7 +406,7 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
           : `/api/voices?scope=recommend&${p}&style=${target.style}&speaker=${target.speaker}`;
     getJSON<{ voices: (SharedVoice | VoiceInfo)[] }>(url, headers)
       .then((r) => live && setVoices(shown === "mine" ? rankAccount(free ? freeUsable(r.voices as VoiceInfo[]) : (r.voices as VoiceInfo[]), target, model) : r.voices))
-      .catch((e) => live && setError((e as Error).message))
+      .catch((e) => live && setError(keyMessage((e as Error).message, T)))
       .finally(() => live && setBusy(false));
     return () => {
       live = false;
@@ -407,13 +430,15 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
 
   async function design() {
     setBusy(true);
+    setDesigning(true);
     setError(null);
     try {
       setPreviews((await postJSON<{ previews: DesignPreview[] }>("/api/voices", { action: "design", description: desc }, headers)).previews);
     } catch (e) {
-      setError((e as Error).message);
+      setError(keyMessage((e as Error).message, T));
     } finally {
       setBusy(false);
+      setDesigning(false);
     }
   }
 
@@ -423,7 +448,7 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
       const r = await postJSON<{ voice_id: string }>("/api/voices", { action: "save-design", name, description: desc, generatedVoiceId: p.generated_voice_id }, headers);
       onPick({ voiceId: r.voice_id, name });
     } catch (e) {
-      setError((e as Error).message);
+      setError(keyMessage((e as Error).message, T));
     } finally {
       setBusy(false);
     }
@@ -462,7 +487,7 @@ function VoicePicker({ target, onClose, onPick, onReset }: { target: Target | nu
               <div className="row">
                 <input className="field" style={{ flex: 1 }} value={name} onChange={(e) => setName(e.target.value)} aria-label="name" />
                 <Button variant="primary" onClick={design} disabled={busy || desc.length < 20}>
-                  <Sparkles size={15} /> {busy ? T("生成中…", "Designing…") : T("生成 3 个", "Design 3")}
+                  <Sparkles size={15} /> {designing ? T("生成中…", "Designing…") : T("生成 3 个", "Design 3")}
                 </Button>
               </div>
               <p className="hint">{T("Voice Design 所有套餐可用，只按试听文字计费；保存会占用一个自定义声音位。", "Voice Design works on every plan and bills only the preview text; saving uses a custom voice slot.")}</p>

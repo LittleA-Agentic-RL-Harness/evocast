@@ -43,6 +43,8 @@ interface Ctx {
   play: (e: Episode, openSheet?: boolean) => Promise<void>;
   toggle: () => void;
   seek: (t: number) => void;
+  /** Jump relative to where the audio actually is (taps faster than a time update still add up). */
+  skip: (by: number) => void;
   setRate: (r: number) => void;
   setSheet: (open: boolean) => void;
   /** Resolves once the listening so far is saved. */
@@ -216,6 +218,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     a.currentTime = Math.max(0, Math.min(t, a.duration || t));
   }, []);
 
+  const skip = useCallback((by: number) => {
+    const a = audioRef.current;
+    if (a) seek(a.currentTime + by);
+  }, [seek]);
+
   const setRate = useCallback((r: number) => {
     if (audioRef.current) audioRef.current.playbackRate = r;
     setPlayer((p) => ({ ...p, rate: r }));
@@ -244,7 +251,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lang = settings.uiLang;
   const T = useCallback((zh: string, en: string) => (lang === "zh" ? zh : en), [lang]);
 
-  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, setRate, setSheet, stop };
+  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop };
 
   return (
     <AppCtx.Provider value={value}>
