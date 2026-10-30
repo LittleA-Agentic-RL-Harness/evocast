@@ -45,6 +45,33 @@ export async function postJSON<T>(path: string, body: unknown, headers: Record<s
   return (await res.json()) as T;
 }
 
+/**
+ * A long call with live progress: `onProgress(chars)` while the model writes, then the result.
+ * Errors that arrive mid-stream carry the same codes as plain responses.
+ */
+export async function postStream<T>(path: string, body: unknown, headers: Record<string, string>, onProgress: (chars: number) => void, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/x-ndjson", ...headers }, body: JSON.stringify(body), signal });
+  if (!res.ok) await fail(res, `${path} failed (${res.status})`);
+  if (!res.body || !(res.headers.get("content-type") ?? "").includes("ndjson")) return (await res.json()) as T;
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += value;
+    for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+      const m = JSON.parse(line) as { p?: number; ok?: T; error?: string; code?: string; status?: number };
+      if (m.p !== undefined) onProgress(m.p);
+      else if ("ok" in m) return m.ok as T;
+      else if (m.error) throw new ApiError(m.error, m.code ?? (m.status === 429 ? "rate_limited" : undefined));
+    }
+  }
+  throw new ApiError(`${path} ended before its result`);
+}
+
 export async function postAudio(path: string, body: unknown, headers: Record<string, string>, signal?: AbortSignal): Promise<Uint8Array> {
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body), signal });
   if (!res.ok) await fail(res, `TTS failed (${res.status})`);

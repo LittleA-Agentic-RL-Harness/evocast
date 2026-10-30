@@ -81,7 +81,7 @@ test("UI planner patches are clamped into a valid genome", () => {
       rationale: "test",
       prefill_rules: ["Prefer operator for supply-chain reports.", "x"],
       tone: "loud",
-      shortcuts: [{ label: "晨间简报 · 高管 3′", recipe: { persona: "executive", style: "studio", langs: ["zh", "en", "fr"], minutes: 12, lenses: ["supply", "nope"], mode: "ultra", direction: "" } }],
+      shortcuts: [{ label: "晨间简报 · 高管 3′", recipe: { persona: "executive", style: "studio", langs: ["zh", "en", "fr"], minutes: 40, lenses: ["supply", "nope"], mode: "ultra", direction: "" } }],
       disclosure: { listen: -3, tune: 2, you: 99, evolve: 4 },
     },
     "ui1",
@@ -90,7 +90,7 @@ test("UI planner patches are clamped into a valid genome", () => {
   assert.equal(g.copy.tone, SEED_UI.copy.tone);
   assert.deepEqual(g.prefill.rules, ["Prefer operator for supply-chain reports."]);
   assert.deepEqual(g.shortcuts[0].recipe.langs, ["zh", "en"]);
-  assert.equal(g.shortcuts[0].recipe.minutes, 8);
+  assert.equal(g.shortcuts[0].recipe.minutes, 30);
   assert.deepEqual(g.shortcuts[0].recipe.lenses, ["supply"]);
   assert.equal(g.shortcuts[0].recipe.mode, base.mode);
   assert.deepEqual(g.disclosure, { listen: 0, tune: 2, you: 20, evolve: 4 });

@@ -11,7 +11,7 @@ function fail(e: unknown) {
   return errorResponse(e);
 }
 
-/** GET ?scope=mine | recommend&language&style&speaker&model | library&language&search&gender&age&model */
+/** GET ?scope=mine | recommend&language&style&speaker&model&topic | library&language&search&gender&age&model */
 export async function GET(req: Request) {
   try {
     const key = resolveElevenKey(req) ?? "";
@@ -19,7 +19,7 @@ export async function GET(req: Request) {
     const scope = q.get("scope");
     const model = q.get("model") ?? undefined;
     if (scope === "recommend") {
-      const hint = { language: q.get("language") ?? "zh", style: q.get("style") ?? "studio", speaker: q.get("speaker") ?? "A", model } as SlotHint;
+      const hint = { language: q.get("language") ?? "zh", style: q.get("style") ?? "studio", speaker: q.get("speaker") ?? "A", model, topic: q.get("topic") ?? undefined } as SlotHint;
       return Response.json({ voices: await recommendVoices(key, hint) });
     }
     if (scope === "library") {

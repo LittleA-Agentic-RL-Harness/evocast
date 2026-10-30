@@ -1,6 +1,9 @@
 "use client";
 
-import type { Brief, Episode, EpisodeRequest, Lang, Script, Speaker, TestCase, TestResult, Usage, VoiceChange } from "../types";
+import type { Brief, Chapter, Episode, EpisodeRequest, FigureRef, Lang, ScriptLine, Speaker, TestCase, TestResult, Usage, Visual, VoiceChange } from "../types";
+import type { ChapterOut, EpisodePlan } from "../harness/schemas";
+import { chapterMinutes, placeVisuals, tail } from "../harness/chapters";
+import type { Figure } from "./figures";
 import type { Harness } from "../harness/genome";
 import { resolveVoices, STYLES, type VoiceSlot } from "../harness/styles";
 import type { SharedVoice, VoiceInfo } from "../tts/elevenlabs";
@@ -10,7 +13,7 @@ import { ttsUsd } from "../harness/cost";
 import { chunkCap, chunkScript } from "../tts/chunk";
 import { concatMp3, mp3Duration, mp3Format, stripMp3Headers } from "../tts/mp3";
 import { modelInfo } from "../tts/models";
-import { ApiError, getJSON, keyHeaders, postAudio, postJSON } from "./api";
+import { ApiError, getJSON, keyHeaders, postAudio, postJSON, postStream } from "./api";
 import { idb } from "./store";
 import { getActive, getHarness, getProfile, newId, saveAudio, saveEpisode, saveSource, type Settings } from "./store";
 
@@ -19,7 +22,11 @@ export interface Progress {
   stage: Stage;
   lang?: Lang;
   message: string;
+  /** 0–100 toward the first chapter you can hear (live runs), else toward the finished run. */
   pct: number;
+  /** The chapter being written or voiced (from 0), and how many there are. */
+  chapter?: number;
+  chapters?: number;
 }
 
 export interface GenerateInput {
@@ -30,6 +37,13 @@ export interface GenerateInput {
   onProgress: (p: Progress) => void;
   /** Voices the run had to choose: the settings to save, and what changed (to say in one line). */
   onVoices?: (settings: Settings, change: VoiceChange) => void;
+  /** Figures found in the source PDF: their captions go to the model, their images are kept with the source. */
+  figures?: Figure[];
+  /** The episode so far, after each chapter is written or voiced. */
+  onDraft?: (d: Draft) => void;
+  /** Each voiced chunk of the first language, in order, as it arrives (makes the run "live"). */
+  onAudio?: (bytes: Uint8Array, seconds: number, d: Draft) => void;
+  onSaved?: (e: Episode) => void;
   signal?: AbortSignal;
 }
 
@@ -73,13 +87,30 @@ interface BriefResponse {
   latencyMs: number;
   mapReduceParts: number;
 }
-interface ScriptResponse {
-  script: Script;
+interface PlanResponse {
+  plan: EpisodePlan;
+  usage: Usage | null;
+  latencyMs: number;
+}
+interface ChapterResponse {
+  chapter: ChapterOut;
+  usage: Usage | null;
+  latencyMs: number;
+}
+interface GradeResponse {
   results: TestResult[];
   passRate: number | null;
   usage: Usage | null;
-  revisions: number;
-  latencyMs: number;
+}
+
+/** The episode while it is being made: what the player shows, and how far along it is. */
+export interface Draft {
+  episode: Episode;
+  written: number;
+  voiced: number;
+  chapters: number;
+  /** Best guess at the finished length (s), from the chapters voiced so far. */
+  estimatedSec: number;
 }
 
 /**
@@ -98,7 +129,22 @@ export function effectiveTtsModel(h: Harness, mode: EpisodeRequest["mode"], s: S
   return usable(turbo) && !modelInfo(turbo)!.dialogue ? turbo : h.pipeline.ttsModel;
 }
 
-/** Full pipeline in the browser: brief once, then script + audio for each language. */
+/** Roughly how much JSON each call writes, so streamed characters can move a progress bar honestly. */
+const EXPECT = { brief: 6500, overhead: 700, perChapter: 140 };
+const fraction = (chars: number, expected: number) => Math.min(0.97, chars / expected);
+
+/** A stable key for a source read under one set of brief settings, so the same document is never read twice. */
+async function briefKey(text: string, h: Harness, request: GenerateInput["request"], trial: boolean): Promise<string> {
+  const data = new TextEncoder().encode(JSON.stringify([text, h.brief, h.pipeline.briefEffort, request.lenses, request.direction, trial]));
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return `brief:${[...new Uint8Array(hash)].slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * Full pipeline in the browser: one brief, then for each language a chaptered episode. Chapter k+1
+ * is written while chapter k is voiced, and every voiced chunk of the first language is handed to
+ * `onAudio` at once, so listening can start long before the episode is finished.
+ */
 export async function generateEpisodes(input: GenerateInput): Promise<Episode[]> {
   const { settings, request, onProgress, signal } = input;
   const headers = keyHeaders(settings.keys, settings.llmPrice);
@@ -116,6 +162,9 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
   const notes = notesFor(profile, request.persona);
   const ttsModel = effectiveTtsModel(harness, request.mode, settings);
   const sourceId = newId("src");
+  const trial = settings.keys.llmProvider === "hosted";
+  const figures = input.figures ?? [];
+  const refs: FigureRef[] = figures.map((f) => ({ n: f.n, label: f.label, caption: f.caption }));
 
   // Free plans can't use library voices through the API: start from the account's own voices,
   // and stop before any spending when a seat has nothing it could speak with.
@@ -131,30 +180,62 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
     if (input.langs.some((l) => libraryOnly(request.style, l, current))) throw new ApiError("Free ElevenLabs plans can't use library voices through the API.", "free_needs_voices");
   }
   // A key that can't make speech fails here, before the model is paid to read and write.
-  if (settings.keys.llmProvider !== "hosted" && settings.keys.elevenlabsKey) await postJSON("/api/tts", { probe: true }, headers, signal);
+  if (!trial && settings.keys.elevenlabsKey) await postJSON("/api/tts", { probe: true }, headers, signal);
   await saveSource(sourceId, input.source);
+  if (figures.length) await idb.put("sources", `fig:${sourceId}`, figures);
 
-  onProgress({ stage: "brief", message: `Reading ${input.source.name} (${Math.round(input.source.text.length / 1000)}k chars)…`, pct: 5 });
   // A real title (not a file name or arXiv id) helps the model and keeps titles honest.
   const titled = /\s/.test(input.source.name) && /[a-z\u3400-\u9fff]{3,}/i.test(input.source.name) && !input.source.text.startsWith(input.source.name);
   const text = titled ? `${input.source.name}\n\n${input.source.text}` : input.source.text;
-  const b = await postJSON<BriefResponse>("/api/brief", { text, lenses: request.lenses, direction: request.direction, harness }, headers, signal);
+  const key = await briefKey(text, harness, request, trial);
+  const cached = await idb.get<BriefResponse>("kv", key);
+  const live = Boolean(input.onAudio);
+  // Live: the bar measures the wait until the first chapter can be heard. Otherwise, the whole run.
+  const span = (from: number, to: number, f: number) => from + (to - from) * f;
+  onProgress({ stage: "brief", message: "reading", pct: 3 });
+  const b =
+    cached ??
+    (await postStream<BriefResponse>("/api/brief", { text, lenses: request.lenses, direction: request.direction, harness }, headers, (c) => onProgress({ stage: "brief", message: "reading", pct: span(3, live ? 40 : 25, fraction(c, EXPECT.brief)) }), signal));
+  if (!cached) await idb.put("kv", key, { ...b, usage: null });
 
   const episodes: Episode[] = [];
   for (const [li, lang] of input.langs.entries()) {
-    const base = 15 + (li * 85) / input.langs.length;
-    const span = 85 / input.langs.length;
     const req: EpisodeRequest = { ...request, lang };
+    const playing = live && li === 0;
+    const minutes = chapterMinutes(request.minutes);
+    const n = minutes.length;
+    const cpm = harness.script.charsPerMinute[lang];
+    // Overall progress for a language that isn't played live: its share of 25–100.
+    const base = 25 + (li * 75) / input.langs.length;
+    const share = 75 / input.langs.length;
+    const overall = (done: number) => base + share * Math.min(1, done / n);
+    const x = { brief: b.brief, tests: b.tests, request: req, harness, notes, figures: refs, minutes };
 
-    onProgress({ stage: "script", lang, message: harness.pipeline.revise ? "Writing, verifying and revising the script…" : "Writing the script…", pct: base + span * 0.05 });
-    const s = await postJSON<ScriptResponse>("/api/script", { brief: b.brief, tests: b.tests, request: req, harness, notes }, headers, signal);
+    onProgress({ stage: "script", lang, message: "planning", pct: playing ? 40 : overall(0), chapter: 0, chapters: n });
+    const planned = await postStream<PlanResponse>("/api/script", { ...x, op: "plan" }, headers, (c) => {
+      const f = fraction(c, minutes[0] * cpm * 1.25 + EXPECT.overhead + n * EXPECT.perChapter);
+      onProgress({ stage: "script", lang, message: "planning", pct: playing ? span(40, 75, f) : overall(f * 0.5), chapter: 0, chapters: n });
+    }, signal);
+    const plan = planned.plan;
+    let llmUsd = (b.usage?.usd ?? 0) / input.langs.length + (planned.usage?.usd ?? 0);
+
+    const id = newId("ep");
+    const lines: ScriptLine[] = [];
+    const chapters: Chapter[] = [];
+    const visuals: Visual[] = [];
+    const shown = new Set<number>();
+    const add = (k: number, out: { lines: ScriptLine[]; visuals: EpisodePlan["visuals"] }) => {
+      chapters.push({ title: plan.chapters[k]?.title ?? `${k + 1}`, start: lines.length });
+      visuals.push(...placeVisuals(out.visuals, lines.length, out.lines.length, refs, shown));
+      lines.push(...out.lines);
+    };
+    add(0, plan);
 
     const voices = seatVoices(current, request.style, lang);
     const voiceIds: Record<Speaker, string> = { A: voices.A.voiceId, B: voices.B.voiceId };
     /** Replace the seats a voice error points at; false when nothing could take their place. */
     const heal = async (e: ApiError): Promise<boolean> => {
       // The trial falls back on the vetted shelf; a free plan on its own voices; a paid plan on ElevenLabs' top pick.
-      const trial = current.keys.llmProvider === "hosted";
       const free = !trial && (e.code === "paid_plan_required" || freePlan(current));
       const own = free ? freeUsable((await getJSON<{ voices: VoiceInfo[] }>("/api/voices?scope=mine", headers).catch(() => null))?.voices ?? []) : [];
       // A free plan's message names no voice: every seat outside the usable account voices is the problem.
@@ -175,74 +256,139 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
       }
       return healed;
     };
-    const chunks = chunkScript(s.script.lines, chunkCap(lang, harness.script.charsPerMinute[lang]));
-    const parts: Uint8Array[] = [];
-    const timings: number[] = new Array(s.script.lines.length).fill(NaN);
-    const tTts = Date.now();
-    // An optional Eleven Music intro sting, prepended only when its MP3 format matches the voices.
-    let offset = 0;
-    const sting = settings.sting ? await getSting(request.style, headers, signal).catch(() => null) : null;
-    for (const [ci, chunk] of chunks.entries()) {
-      onProgress({ stage: "tts", lang, message: `Voicing part ${ci + 1}/${chunks.length}…`, pct: base + span * (0.35 + (0.6 * ci) / chunks.length) });
-      const context = {
-        previous: chunks[ci - 1]?.lines.map((l) => l.text).join(" ").slice(-100),
-        next: chunks[ci + 1]?.lines.map((l) => l.text).join(" ").slice(0, 100),
-      };
-      const voice = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk.lines, voices: voiceIds, model: ttsModel, lang, context }, headers, signal);
-      // One retry per chunk: a transient provider error shouldn't throw away the script already paid for.
-      // A voice that's gone is replaced first, so the retry speaks with its successor.
-      const r = await voice().catch(async (e) => {
-        if (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || FINAL.has(e.code ?? "")))) throw e;
-        if (e instanceof ApiError && (e.code === "voice_not_found" || e.code === "paid_plan_required") && !(await heal(e))) throw e;
-        return voice();
-      });
-      const bytes = stripMp3Headers(Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0)));
-      if (ci === 0 && sting && sameFormat(sting, bytes)) {
-        parts.push(stripMp3Headers(sting));
-        offset += mp3Duration(sting);
-      }
-      chunk.src.forEach((src, j) => {
-        if (Number.isNaN(timings[src])) timings[src] = offset + (r.starts[j] ?? 0);
-      });
-      parts.push(bytes);
-      offset += mp3Duration(bytes);
-    }
-    const audio = concatMp3(parts);
-    const ttsChars = chunks.reduce((n, c) => n + c.chars, 0);
 
-    const llmUsd = (b.usage?.usd ?? 0) / input.langs.length + (s.usage?.usd ?? 0);
+    const parts: Uint8Array[] = [];
+    const timings: number[] = [];
+    const tTts = Date.now();
+    let offset = 0;
+    let ttsChars = 0;
+    // An optional Eleven Music intro sting, prepended only when its MP3 format matches the voices.
+    const sting = settings.sting ? await getSting(request.style, headers, signal).catch(() => null) : null;
+    const draft = (written: number, voiced: number): Draft => {
+      const voicedChars = lines.slice(0, timings.length).reduce((t, l) => t + l.text.length, 0);
+      const perChar = voicedChars ? offset / voicedChars : 60 / cpm;
+      const unvoiced = lines.slice(timings.length).reduce((t, l) => t + l.text.length, 0) + minutes.slice(chapters.length).reduce((t, m) => t + m * cpm, 0);
+      const estimatedSec = Math.round(offset + unvoiced * perChar);
+      return {
+        episode: {
+          ...req,
+          id,
+          sourceId,
+          createdAt: new Date().toISOString(),
+          title: plan.title,
+          sourceName: input.source.name,
+          harnessId: harness.id,
+          brief: b.brief,
+          tests: b.tests,
+          script: { title: plan.title, lang, lines: [...lines], show_notes: plan.show_notes },
+          results: [],
+          metrics: { llmUsd, ttsChars, ttsUsd: 0, latencyMs: {}, passRate: null, allPass: null },
+          durationSec: estimatedSec,
+          ttsModel,
+          voices: { ...voiceIds },
+          timings: [...timings],
+          chapters: [...chapters],
+          visuals: [...visuals],
+          ...(refs.length ? { figures: refs } : {}),
+        },
+        written,
+        voiced,
+        chapters: n,
+        estimatedSec,
+      };
+    };
+    input.onDraft?.(draft(1, 0));
+
+    const write = (k: number) => {
+      const p = postStream<ChapterResponse>("/api/script", { ...x, op: "chapter", plan: { title: plan.title, chapters: plan.chapters }, k, last: tail(lines), shown: [...shown] }, headers, () => undefined, signal);
+      // Awaited after the current chapter is voiced; if voicing fails first, its failure isn't left unhandled.
+      p.catch(() => undefined);
+      return p;
+    };
+    let next = n > 1 ? write(1) : null;
+    let grading: Promise<GradeResponse | null> | null = null;
+    const grade = () =>
+      harness.pipeline.grade || harness.pipeline.revise
+        ? postJSON<GradeResponse>("/api/script", { ...x, op: "grade", script: { title: plan.title, lang, lines, show_notes: plan.show_notes } }, headers, signal).catch(() => null)
+        : Promise.resolve(null);
+    if (n === 1) grading = grade();
+
+    for (let k = 0; k < n; k++) {
+      const from = chapters[k].start;
+      const to = k + 1 < chapters.length ? chapters[k + 1].start : lines.length;
+      const chunks = chunkScript(lines.slice(from, to), chunkCap(lang, cpm));
+      for (const [ci, chunk] of chunks.entries()) {
+        onProgress({ stage: "tts", lang, message: "voicing", pct: playing ? (k === 0 ? span(75, 99, ci / chunks.length) : 100) : overall(k + 0.5 + (0.5 * ci) / chunks.length), chapter: k, chapters: n });
+        const context = {
+          previous: (ci ? chunks[ci - 1].lines : lines.slice(Math.max(0, from - 2), from)).map((l) => l.text).join(" ").slice(-100),
+          next: chunks[ci + 1]?.lines.map((l) => l.text).join(" ").slice(0, 100),
+        };
+        const voice = () => postJSON<{ audio: string; starts: number[] }>("/api/tts", { lines: chunk.lines, voices: voiceIds, model: ttsModel, lang, context }, headers, signal);
+        // One retry per chunk: a transient provider error shouldn't throw away the script already paid for.
+        // A voice that's gone is replaced first, so the retry speaks with its successor.
+        const r = await voice().catch(async (e) => {
+          if (signal?.aborted || (e instanceof ApiError && (e.code?.startsWith("trial") || FINAL.has(e.code ?? "")))) throw e;
+          if (e instanceof ApiError && (e.code === "voice_not_found" || e.code === "paid_plan_required") && !(await heal(e))) throw e;
+          return voice();
+        });
+        let bytes = stripMp3Headers(Uint8Array.from(atob(r.audio), (c) => c.charCodeAt(0)));
+        let start = offset;
+        if (k === 0 && ci === 0 && sting && sameFormat(sting, bytes)) {
+          const intro = stripMp3Headers(sting);
+          start += mp3Duration(intro);
+          bytes = concatMp3([intro, bytes]);
+        }
+        chunk.src.forEach((src, j) => {
+          const at = from + src;
+          while (timings.length < at) timings.push(timings[timings.length - 1] ?? start);
+          if (timings.length === at) timings.push(start + (r.starts[j] ?? 0));
+        });
+        const secs = mp3Duration(bytes);
+        parts.push(bytes);
+        ttsChars += chunk.chars;
+        offset += secs;
+        if (playing) input.onAudio?.(bytes, secs, draft(chapters.length, k));
+      }
+      // Lines that were too short to voice still get a start time.
+      while (timings.length < to) timings.push(timings[timings.length - 1] ?? 0);
+      input.onDraft?.(draft(chapters.length, k + 1));
+      if (next) {
+        const c = await next;
+        llmUsd += c.usage?.usd ?? 0;
+        add(k + 1, c.chapter);
+        next = k + 2 < n ? write(k + 2) : null;
+        if (!next && !grading) grading = grade();
+        input.onDraft?.(draft(chapters.length, k + 1));
+      }
+    }
+
+    const audio = concatMp3(parts);
+    const graded = grading ? await grading : null;
+    llmUsd += graded?.usage?.usd ?? 0;
     const ep: Episode = {
-      ...req,
-      id: newId("ep"),
-      sourceId,
+      ...draft(n, n).episode,
       createdAt: new Date().toISOString(),
-      title: s.script.title,
-      sourceName: input.source.name,
-      harnessId: harness.id,
-      brief: b.brief,
-      tests: b.tests,
-      script: s.script,
-      results: s.results,
+      results: graded?.results ?? [],
       metrics: {
         llmUsd,
         ttsChars,
         ttsUsd: ttsUsd(ttsModel, ttsChars, settings.ttsMultiplier),
-        latencyMs: { brief: b.latencyMs, script: s.latencyMs, tts: Date.now() - tTts },
-        passRate: s.passRate,
-        allPass: s.results.length ? s.results.every((r) => r.pass) : null,
+        latencyMs: { brief: cached ? 0 : b.latencyMs, script: planned.latencyMs, tts: Date.now() - tTts },
+        passRate: graded?.passRate ?? null,
+        allPass: graded?.results.length ? graded.results.every((r) => r.pass) : null,
       },
       durationSec: Math.round(mp3Duration(audio)),
-      ttsModel,
       voices: { ...voiceIds },
-      timings: timings.map((t, i) => (Number.isNaN(t) ? (timings[i - 1] ?? 0) : t)),
+      timings: timings.slice(0, lines.length),
       ...(mine(changes, lang).length ? { voiceChanges: mine(changes, lang) } : {}),
     };
-    onProgress({ stage: "save", lang, message: "Saving to your library…", pct: base + span * 0.98 });
+    onProgress({ stage: "save", lang, message: "saving", pct: playing ? 100 : overall(n), chapter: n - 1, chapters: n });
     await saveAudio(ep.id, new Blob([audio as BlobPart], { type: "audio/mpeg" }));
     await saveEpisode(ep);
+    input.onSaved?.(ep);
     episodes.push(ep);
   }
-  onProgress({ stage: "save", message: "Done", pct: 100 });
+  onProgress({ stage: "save", message: "done", pct: 100 });
   return episodes;
 }
 

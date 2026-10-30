@@ -1,21 +1,24 @@
-import type { Brief, EpisodeRequest, Script, TestCase, TestResult, Usage } from "../types";
+import type { Brief, EpisodeRequest, FigureRef, Script, ScriptLine, TestCase, TestResult, Usage } from "../types";
 import type { Harness } from "../harness/genome";
 import { addUsage, callJSON, type LLMConfig } from "../llm";
-import { mockBrief, mockDiagnosis, mockGrade, mockPlan, mockScript } from "../llm/mock";
-import { BriefWithTestsSchema, DiagnosisSchema, GradeSchema, NotesSchema, PlanSchema, ScriptSchema, type Diagnosis, type Plan } from "../harness/schemas";
+import { mockBrief, mockChapter, mockDiagnosis, mockEpisodePlan, mockGrade, mockPlan, mockScript } from "../llm/mock";
+import { BriefWithTestsSchema, ChapterSchema, DiagnosisSchema, EpisodePlanSchema, GradeSchema, NotesSchema, PlanSchema, ScriptSchema, type ChapterOut, type Diagnosis, type EpisodePlan, type Plan } from "../harness/schemas";
 import {
   analyzerSystem,
   analyzerUser,
   briefSystem,
   briefUser,
+  chapterUser,
   gradeSystem,
   gradeUser,
   notesSystem,
   plannerSystem,
   plannerUser,
+  planUser,
   reviseUser,
   scriptSystem,
   scriptUser,
+  type ChapterPlan,
   type EpisodeTrace,
   type PlannerPriority,
 } from "../harness/prompts";
@@ -53,6 +56,7 @@ export async function makeBrief(
   text: string,
   lenses: string[],
   direction: string,
+  onText?: (chars: number) => void,
 ): Promise<{ brief: Brief; tests: TestCase[]; usage: Usage | null; mapReduceParts: number }> {
   let usage: Usage | null = null;
   let doc = text;
@@ -83,6 +87,7 @@ export async function makeBrief(
     effort: h.pipeline.briefEffort,
     maxTokens: 24000,
     mock: () => mockBrief(doc),
+    onText,
   });
   usage = addUsage(usage, r.usage);
   const tests = r.data.tests.map((t, i) => ({ ...t, id: `T${i + 1}` }));
@@ -172,6 +177,103 @@ export async function runScriptStage(
     results = graded.results;
   }
   return { script, results, passRate: results.length ? passRate(results) : null, usage, revisions, evalOverheadUsd };
+}
+
+// ------------------------------------------------------------------ stage 2, chapter by chapter
+
+export interface ChapterInput {
+  brief: Brief;
+  tests: TestCase[];
+  req: EpisodeRequest;
+  notes: string[];
+  figures: FigureRef[];
+  /** Minutes per chapter (chapterMinutes). */
+  minutes: number[];
+}
+
+const clean = (lines: ScriptLine[]) => lines.filter((l) => l.text.trim());
+
+/** Plan every chapter and write chapter 1: one call, so the first audio comes as soon as possible. */
+export async function planEpisode(cfg: LLMConfig, h: Harness, x: ChapterInput, onText?: (chars: number) => void): Promise<{ plan: EpisodePlan; usage: Usage }> {
+  const r = await callJSON(cfg, {
+    system: scriptSystem(h, x.req, x.notes, true),
+    user: planUser(h, x.brief, x.req, buildTestSuite(x.tests, x.req), x.figures, x.minutes),
+    schema: EpisodePlanSchema,
+    effort: h.pipeline.scriptEffort,
+    maxTokens: 16000,
+    mock: () => mockEpisodePlan(x.brief, x.req, h, x.minutes),
+    onText,
+  });
+  const chapters = r.data.chapters.slice(0, x.minutes.length);
+  // A plan short of chapters gets plain stand-ins, so every chapter still has a title and a goal.
+  while (chapters.length < x.minutes.length) chapters.push({ title: `${chapters.length + 1}`, goal: "Continue the episode.", covers: [] });
+  return { plan: { ...r.data, chapters, lines: clean(r.data.lines) }, usage: r.usage };
+}
+
+/**
+ * Chapter k (k ≥ 1). Under a harness that revises, the chapter is graded on the tests the plan gave it
+ * (plus the accuracy and forbidden ones) and rewritten once before anyone hears it.
+ */
+export async function writeChapter(
+  cfg: LLMConfig,
+  h: Harness,
+  x: ChapterInput,
+  plan: ChapterPlan,
+  k: number,
+  last: ScriptLine[],
+  shown: number[],
+  onText?: (chars: number) => void,
+): Promise<{ chapter: ChapterOut; usage: Usage | null; revisions: number }> {
+  const user = chapterUser(h, x.brief, x.req, x.figures, plan, k, x.minutes, last, shown);
+  const write = (prompt: string) =>
+    callJSON(cfg, {
+      system: scriptSystem(h, x.req, x.notes, true),
+      user: prompt,
+      schema: ChapterSchema,
+      effort: h.pipeline.scriptEffort,
+      maxTokens: 16000,
+      mock: () => mockChapter(x.brief, x.req, h, x.minutes[k], k, plan.chapters.length),
+      onText,
+    });
+  const r = await write(user);
+  let usage: Usage | null = r.usage;
+  let chapter: ChapterOut = { ...r.data, lines: clean(r.data.lines) };
+  let revisions = 0;
+  if (h.pipeline.revise && h.pipeline.maxRevisions > 0) {
+    const covers = new Set(plan.chapters[k]?.covers ?? []);
+    const suite = buildTestSuite(x.tests, x.req).filter((t) => covers.has(t.id) || t.kind === "accuracy" || t.kind === "forbidden");
+    if (suite.length) {
+      const g = await gradeLines(cfg, h, x.brief, chapter.lines, suite);
+      usage = addUsage(usage, g.usage);
+      const failures = g.results.filter((t) => !t.pass).map((t) => ({ check: suite.find((s) => s.id === t.id)?.check ?? t.id, note: t.note }));
+      if (failures.length) {
+        const again = await write(`${user}\n\nA draft of this chapter is below. A verification pass found these problems:\n${failures.map((f, i) => `${i + 1}. ${f.check} — finding: ${f.note}`).join("\n")}\n\nRewrite the chapter so every problem is fixed, keeping what already worked and staying within its length.\n\n<draft>\n${JSON.stringify(chapter.lines, null, 1)}\n</draft>`);
+        usage = addUsage(usage, again.usage);
+        chapter = { ...again.data, lines: clean(again.data.lines) };
+        revisions = 1;
+      }
+    }
+  }
+  return { chapter, usage, revisions };
+}
+
+async function gradeLines(cfg: LLMConfig, h: Harness, brief: Brief, lines: ScriptLine[], suite: TestCase[]) {
+  const script: Script = { title: "", lang: "en", lines, show_notes: [] };
+  const r = await callJSON(cfg, {
+    system: gradeSystem(),
+    user: gradeUser(brief, script, suite),
+    schema: GradeSchema,
+    effort: "low",
+    maxTokens: 8000,
+    mock: () => mockGrade(suite, h.id + lines.length),
+  });
+  return { results: r.data.results, usage: r.usage };
+}
+
+/** The whole chaptered episode against the full suite, for the record (Checks) and for self-evolution. */
+export async function gradeEpisode(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest) {
+  const graded = await gradeScript(cfg, h, brief, docTests, script, req);
+  return { results: graded.results, passRate: graded.results.length ? passRate(graded.results) : null, usage: graded.usage };
 }
 
 // ------------------------------------------------------------------ evolution agents

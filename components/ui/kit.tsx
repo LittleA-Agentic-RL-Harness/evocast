@@ -93,9 +93,9 @@ export function Popover({ trigger, children, align = "start", width }: { trigger
   );
 }
 
-export function MenuItem({ title, subtitle, checked, onSelect }: { title: ReactNode; subtitle?: ReactNode; checked?: boolean; onSelect: () => void }) {
+export function MenuItem({ title, subtitle, checked, disabled, onSelect }: { title: ReactNode; subtitle?: ReactNode; checked?: boolean; disabled?: boolean; onSelect: () => void }) {
   return (
-    <button className="menu-item" role="menuitemradio" aria-checked={checked} onClick={onSelect}>
+    <button className="menu-item" role="menuitemradio" aria-checked={checked} disabled={disabled} onClick={onSelect}>
       <span className="check">{checked ? <Check size={14} /> : null}</span>
       <span>
         {title}
@@ -112,7 +112,7 @@ function Portal({ children }: { children: ReactNode }) {
 }
 
 /** Bottom sheet; closes with its own button, Escape or the scrim. */
-export function Sheet({ open, onClose, children, label }: { open: boolean; onClose: () => void; children: ReactNode; label: string }) {
+export function Sheet({ open, onClose, children, label, className }: { open: boolean; onClose: () => void; children: ReactNode; label: string; className?: string }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -130,7 +130,7 @@ export function Sheet({ open, onClose, children, label }: { open: boolean; onClo
         {open && (
           <>
             <motion.div className="scrim" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} />
-            <motion.div className="sheet" role="dialog" aria-modal="true" aria-label={label} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}>
+            <motion.div className={`sheet${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-label={label} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade}>
               {children}
             </motion.div>
           </>

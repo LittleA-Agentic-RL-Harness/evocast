@@ -44,23 +44,31 @@ sequenceDiagram
   participant S as /api/script
   participant T as /api/tts
   U->>H: drop a PDF / paste a link
-  H->>H: habit prefill (recency-weighted past choices)
-  H->>P: document head + portrait + recent recipes
-  P-->>H: content-aware recipe + one-line reason
+  H->>H: habit prefill; figures and tables cropped from the PDF (on the device)
+  H->>P: document head + portrait + recent recipes (with their focus lines)
+  P-->>H: content-aware recipe, hidden focus line, one-line reason
   U->>H: (optional) tap a token, then Create
   H->>H: log session (prefill vs final) for the interface harness
-  H->>B: full text + lenses
-  B-->>H: source-grounded brief + FIXED tests T1..Tn
+  H->>B: full text + lenses + focus (skipped when this brief is cached)
+  B-->>H: progress lines, then source-grounded brief + FIXED tests T1..Tn
   loop each language
-    H->>S: brief + persona + style + harness
-    S-->>H: script, graded on T*/S*/P* (LLM) + R* (rules), revised in heavy mode
-    loop chunks ≤1,800 chars and ≤2.5 min
-      H->>T: lines + voices + previous/future context
-      T-->>H: MP3 + per-line start times (with-timestamps)
+    H->>S: op "plan": brief + tests + figure captions + chapter lengths
+    S-->>H: progress lines, then title, chapter plan, chapter 1 + its visuals
+    loop chapter k = 1..n
+      par voice chapter k
+        loop chunks ≤1,800 chars and ≤2.5 min
+          H->>T: lines + voices + previous/future context
+          T-->>H: MP3 + per-line start times → appended to the playing stream
+        end
+      and write chapter k+1
+        H->>S: op "chapter": plan + the last turns + figures already shown
+        S-->>H: lines + visuals (graded and revised once in heavy mode)
+      end
     end
-    H->>H: stitch MP3, store timings, save to IndexedDB
+    H->>S: op "grade": the whole script on T*/S*/P* (LLM) + R* (rules)
+    H->>H: stitch MP3, store timings, chapters and visuals, save to IndexedDB
   end
-  H-->>U: Now Playing with a synced transcript
+  H-->>U: Now Playing from chapter 1: figures, sketches, a synced transcript window
 ```
 
 ## Two-layer recursive self-improvement

@@ -89,10 +89,10 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 ```mermaid
 flowchart LR
   A["📄 PDF / link"] --> P["✦ Prefill<br/>habit + content"]
-  P --> B["Brief + FIXED tests<br/>(once per document)"]
-  B --> S["Script per persona & language<br/>graded · revised in heavy mode"]
+  P --> B["Brief + FIXED tests<br/>(once per document, cached)"]
+  B --> S["Chapters per persona & language<br/>k+1 written while k is voiced"]
   S --> T["Eleven v4 dialogue<br/>per-line timestamps"]
-  T --> L["🎧 Listen<br/>synced transcript"]
+  T --> L["🎧 Listen from chapter 1<br/>figures · sketches · synced transcript"]
   L --> F["👍 👎 tags · completion · speed"]
   F --> E["Evolve<br/>content harness + interface harness"]
   E -. better harness .-> S

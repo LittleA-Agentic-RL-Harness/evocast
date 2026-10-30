@@ -45,6 +45,34 @@ export interface Script {
   show_notes: string[];
 }
 
+/** A simple drawing the player shows beside the transcript: steps, numbers side by side, a worked example, a term. */
+export interface Sketch {
+  kind: "flow" | "compare" | "example" | "term";
+  title: string;
+  items: { label: string; value: string }[];
+}
+
+/** What the player shows from a line on: one of the source's figures, a sketch, or both. */
+export interface Visual {
+  line: number;
+  /** 1-based number in the episode's `figures`. */
+  figure?: number;
+  sketch?: Sketch;
+}
+
+export interface Chapter {
+  title: string;
+  /** Index of the chapter's first script line. */
+  start: number;
+}
+
+/** A figure or table found in the source PDF; its image is stored on this device with the source. */
+export interface FigureRef {
+  n: number;
+  label: string;
+  caption: string;
+}
+
 export interface TestResult {
   id: string;
   pass: boolean;
@@ -115,6 +143,10 @@ export interface Episode extends EpisodeRequest {
   timings?: number[];
   /** Voices this run had to choose for itself, said in one line under the title. */
   voiceChanges?: VoiceChange[];
+  /** Written and voiced chapter by chapter (episodes from before chapters have none). */
+  chapters?: Chapter[];
+  visuals?: Visual[];
+  figures?: FigureRef[];
   feedback?: Feedback;
 }
 

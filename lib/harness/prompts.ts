@@ -1,4 +1,4 @@
-import type { Brief, EpisodeRequest, Lang, Script, TestCase } from "../types";
+import type { Brief, EpisodeRequest, FigureRef, Lang, Script, ScriptLine, TestCase } from "../types";
 import type { Harness } from "./genome";
 import { PERSONAS } from "./personas";
 import { STYLES } from "./styles";
@@ -21,7 +21,7 @@ ${h.brief.rules.map((r) => `- ${r}`).join("\n")}
 - Keep at most ${h.brief.maxFindings} key findings; each finding pairs a claim with the concrete evidence (number, comparison, sample) from the source.
 - Write the brief in English, regardless of the document language. Keep proper nouns and method names as written in the source.
 
-2. A set of ${h.brief.numTests} fixed VERIFICATION TESTS that any faithful 3–8 minute podcast script about this source must pass.
+2. A set of ${h.brief.numTests} fixed VERIFICATION TESTS that any faithful podcast script about this source (8 to 30 minutes long) must pass.
 - About half "coverage": a specific key point and, where relevant, the number that must be conveyed (rounded is fine).
 - At least one "accuracy": a specific, plausible misreading that must NOT appear (e.g. confusing what was compared, overstating scope).
 - At least one "forbidden": a tempting over-claim or hype statement the source does not support.
@@ -67,7 +67,7 @@ export function targetChars(h: Harness, lang: Lang, minutes: number): number {
   return Math.round(h.script.charsPerMinute[lang] * minutes);
 }
 
-export function scriptSystem(h: Harness, req: EpisodeRequest, listenerNotes: string[]): string {
+export function scriptSystem(h: Harness, req: EpisodeRequest, listenerNotes: string[], chaptered = false): string {
   const p = PERSONAS[req.persona];
   const s = STYLES[req.style];
   const target = targetChars(h, req.lang, req.minutes);
@@ -98,14 +98,14 @@ ${s.rules[req.lang].map((r) => `- ${r}`).join("\n")}
 ${LANG_RULES[req.lang].map((r) => `- ${r}`).join("\n")}
 
 ## Length budget
-- Total spoken text ≈ ${target} characters (≈ ${req.minutes} min). Stay within ±15%.
+${chaptered ? `- The whole episode ≈ ${target} characters (≈ ${req.minutes} min); each chapter has its own target, given with the request. Stay within ±15% of it.` : `- Total spoken text ≈ ${target} characters (≈ ${req.minutes} min). Stay within ±15%.`}
 - At most ${h.script.maxTurnChars[req.lang]} characters per turn; vary turn length.
-- At most ${reactions} very short reaction turns in the whole script.
+- At most ${reactions} very short reaction turns in the whole ${chaptered ? "episode" : "script"}.
 - The first ${h.script.hookLines} line(s) must deliver the hook.
 
 ## Structure (adapt to the material; never announce section names)
 ${h.script.structure.map((x, i) => `${i + 1}. ${x}`).join("\n")}
-
+${chaptered ? `\n${CHAPTER_RULES}\n` : ""}
 ## Rules
 ${h.script.rules.map((r) => `- ${r}`).join("\n")}
 - Stay faithful to the brief: it is your only source of facts. If the brief lacks something, don't fill the gap with guesses.
@@ -114,7 +114,77 @@ ${h.script.rules.map((r) => `- ${r}`).join("\n")}
 ${audioTagRule(h)}
 ${listenerNotes.length ? `\n## This listener's learned preferences (from their feedback)\n${listenerNotes.map((n) => `- ${n}`).join("\n")}\n` : ""}
 ## Output
-JSON with: "title" (catchy episode title in the script language), "lines" (array of {"speaker": "A" | "B", "text"}), "show_notes" (3–5 one-sentence takeaways in the script language).`;
+${chaptered ? "The request says what to return." : `JSON with: "title" (catchy episode title in the script language), "lines" (array of {"speaker": "A" | "B", "text"}), "show_notes" (3–5 one-sentence takeaways in the script language).`}`;
+}
+
+const CHAPTER_RULES = `## Chapters
+The episode is written and voiced one chapter at a time, so the listener starts while later chapters are being written. It must still sound like one continuous conversation: no greetings after chapter 1, no "welcome back", no recaps at chapter starts, never announce a chapter. Longer episodes go deeper, not wider: more of the mechanism, each key result with its setup, a concrete example, the caveats. Never pad.
+
+## Visuals
+The player shows a visual beside the transcript. Give each chapter 1–2 visuals, anchored to the line where each becomes relevant ("at" = that line's index within the chapter, from 0):
+- "figure": the number of a figure or table from <figures> while the lines discuss it, else 0. Show each figure at most once in the episode; prefer the ones that explain the method or the main result. The hosts may then mention it naturally ("the overview figure").
+- "kind" and "items", a simple sketch that makes the abstract concrete:
+  flow: 3–5 steps of a mechanism (label = the step in a few words; value = optional short detail)
+  compare: 2–4 quantities side by side (label = what; value = the number with its unit), only numbers from the brief
+  example: a tiny worked example (label = "Input", "Output", "Step 1"…; value = short, concrete)
+  term: one key term (exactly one item: label = the term; value = its plain meaning in one sentence)
+  none: when the figure says it all (items = [])
+- "title": a few words naming what it shows.
+All visual text is in the script language and as short as possible.`;
+
+function figuresBlock(figures: FigureRef[]): string {
+  return figures.length ? `<figures>\n${figures.map((f) => `[${f.n}] ${f.label}: ${f.caption}`).join("\n")}\n</figures>\n\n` : "";
+}
+
+const chars = (h: Harness, lang: Lang, minutes: number) => Math.round(h.script.charsPerMinute[lang] * minutes);
+
+/** First call of a chaptered episode: plan every chapter, then write chapter 1. */
+export function planUser(h: Harness, brief: Brief, req: EpisodeRequest, tests: TestCase[], figures: FigureRef[], minutes: number[]): string {
+  return `${scriptUser(brief, req).replace(/\n\nWrite the episode now\.$/, "")}
+
+${figuresBlock(figures)}<tests>
+${tests.map((t) => `${t.id} [${t.kind}] ${t.check}`).join("\n")}
+</tests>
+
+Plan this ${req.minutes}-minute episode as ${minutes.length} chapters, then write chapter 1.
+Spoken characters per chapter: ${minutes.map((m, i) => `${i + 1}: ~${chars(h, req.lang, m)}`).join(", ")}.
+- Chapter 1 opens with the hook and why it matters. The last chapter ends with the takeaways, an open question and the sign-off.
+- Each chapter: a short "title" in the script language (a few words), a one-sentence "goal" in English, and "covers": the ids of the tests above it should satisfy (every coverage test belongs to some chapter).
+
+Return: "title" (catchy episode title in the script language), "show_notes" (3–5 one-sentence takeaways in the script language), "chapters" (all ${minutes.length}), "lines" (chapter 1 only, about ${chars(h, req.lang, minutes[0])} characters) and "visuals" (for chapter 1).`;
+}
+
+export interface ChapterPlan {
+  title: string;
+  chapters: { title: string; goal: string; covers: string[] }[];
+}
+
+/** Chapter k (0-based, k ≥ 1) of a planned episode, picking up where the last one ended. */
+export function chapterUser(
+  h: Harness,
+  brief: Brief,
+  req: EpisodeRequest,
+  figures: FigureRef[],
+  plan: ChapterPlan,
+  k: number,
+  minutes: number[],
+  last: ScriptLine[],
+  shown: number[],
+): string {
+  const final = k === plan.chapters.length - 1;
+  const c = plan.chapters[k];
+  return `${scriptUser(brief, req).replace(/\n\nWrite the episode now\.$/, "")}
+
+${figuresBlock(figures)}<plan title="${plan.title.replace(/"/g, "'")}">
+${plan.chapters.map((x, i) => `${i + 1}. ${x.title} — ${x.goal}${i < k ? " (done)" : i === k ? "  ← write this one" : ""}`).join("\n")}
+</plan>
+${shown.length ? `\nFigures already shown: ${shown.join(", ")}.\n` : ""}
+The episode so far ends with:
+${last.map((l) => `${l.speaker}: ${l.text}`).join("\n")}
+
+Write chapter ${k + 1}, "${c.title}": about ${chars(h, req.lang, minutes[k])} spoken characters. Pick up right where the conversation left off. ${final ? "This is the last chapter: end with the takeaways in the listener's format, one open question and a one-line sign-off." : "Don't wrap up the episode; end on a natural turn toward what comes next."}
+
+Return: "lines" (this chapter only) and "visuals" (for this chapter).`;
 }
 
 export function scriptUser(brief: Brief, req: EpisodeRequest): string {

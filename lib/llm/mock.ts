@@ -1,5 +1,5 @@
 import type { Brief, EpisodeRequest, Script, TestCase } from "../types";
-import type { Diagnosis, Plan } from "../harness/schemas";
+import type { ChapterOut, Diagnosis, EpisodePlan, Plan } from "../harness/schemas";
 import type { Harness } from "../harness/genome";
 import { targetChars } from "../harness/prompts";
 
@@ -84,6 +84,31 @@ export function mockScript(brief: Brief, req: EpisodeRequest, h: Harness): Omit<
     n += text.length;
   }
   return { title: zh ? `【演示】${clip(brief.title, 34)}` : `[Demo] ${clip(brief.title, 70)}`, lines, show_notes: seeds.slice(1, 4) };
+}
+
+/** Demo chapters: the demo script cut to each chapter's length, with a sketch so the player has something to show. */
+export function mockChapter(brief: Brief, req: EpisodeRequest, h: Harness, minutes: number, k: number, n: number): ChapterOut {
+  const all = mockScript(brief, { ...req, minutes }, h).lines;
+  const lines = all.slice(k === 0 ? 0 : 1);
+  const zh = req.lang === "zh";
+  const steps = (brief.how_it_works.length ? brief.how_it_works : [brief.core_idea]).slice(0, 3).map((t) => ({ label: clip(t, zh ? 14 : 24), value: "" }));
+  const visuals: ChapterOut["visuals"] =
+    k % 2 === 0
+      ? [{ at: 0, figure: k === 0 ? 1 : 0, kind: "flow", title: zh ? "怎么做的" : "How it works", items: steps.length >= 2 ? steps : [...steps, { label: zh ? "结果" : "Result", value: "" }] }]
+      : [{ at: 0, figure: 0, kind: "term", title: zh ? "关键概念" : "Key idea", items: [{ label: clip(brief.title, 30), value: clip(brief.one_liner, 120) }] }];
+  return { lines: k === n - 1 ? lines : lines.slice(0, -1), visuals };
+}
+
+export function mockEpisodePlan(brief: Brief, req: EpisodeRequest, h: Harness, minutes: number[]): EpisodePlan {
+  const zh = req.lang === "zh";
+  const first = mockScript(brief, { ...req, minutes: minutes[0] }, h);
+  const names = zh ? ["开场", "问题", "核心想法", "怎么做的", "证据", "局限", "启发", "要点", "收尾"] : ["Hook", "The problem", "Core idea", "How it works", "Evidence", "Limits", "So what", "Takeaways", "Wrap-up"];
+  return {
+    title: first.title,
+    show_notes: first.show_notes,
+    chapters: minutes.map((_, i) => ({ title: i === minutes.length - 1 ? names[names.length - 1] : names[i % (names.length - 1)], goal: "Demo chapter.", covers: [] })),
+    ...mockChapter(brief, req, h, minutes[0], 0, minutes.length),
+  };
 }
 
 export function mockGrade(tests: TestCase[], salt: string): { results: { id: string; pass: boolean; note: string }[] } {

@@ -364,7 +364,8 @@ export function fillStarts(starts: number[], inputs: { text: string }[], duratio
 
 // ------------------------------------------------------------------ discovery, design, music
 
-export type SlotHint = { language: "zh" | "en"; style: "studio" | "idol"; speaker: "A" | "B"; model?: string };
+export type SlotHint = { language: "zh" | "en"; style: "studio" | "idol"; speaker: "A" | "B"; model?: string; topic?: Topic };
+export type Topic = "paper" | "report" | "news" | "other";
 
 /**
  * "ElevenLabs recommends": featured, then trending, Voice Library voices that fit a slot, kept
@@ -374,14 +375,18 @@ export async function recommendVoices(key: string, hint: SlotHint): Promise<Shar
   const t = seatTraits({ style: hint.style, lang: hint.language, speaker: hint.speaker });
   const base = new URLSearchParams({ language: hint.language, gender: t.gender, page_size: "24", include_live_moderated: "false" });
   if (t.age) base.set("age", t.age);
-  base.append("use_cases", t.useCase);
   const run = async (extra: Record<string, string>) => {
     const p = new URLSearchParams(base);
     for (const [k, v] of Object.entries(extra)) p.set(k, v);
     const res = await el(key, `/v1/shared-voices?${p}`);
     return rankLibrary(((await res.json()) as { voices: SharedVoice[] }).voices, hint.language, hint.model);
   };
-  const featured = await run({ featured: "true", sort: "trending" }).catch(() => [] as SharedVoice[]);
+  // A paper or a report is best explained by voices made for explaining: ElevenLabs' educational picks lead.
+  const explain = hint.style === "studio" && hint.topic && hint.topic !== "other";
+  const topical = explain ? await run({ use_cases: "informative_educational", featured: "true", sort: "trending" }).catch(() => [] as SharedVoice[]) : [];
+  const topical2 = explain && topical.length < 6 ? await run({ use_cases: "informative_educational", sort: "trending" }).catch(() => [] as SharedVoice[]) : [];
+  base.append("use_cases", t.useCase);
+  const featured = [...topical, ...topical2, ...(await run({ featured: "true", sort: "trending" }).catch(() => [] as SharedVoice[]))];
   const trending = featured.length >= 6 ? [] : await run({ sort: "trending" }).catch(() => [] as SharedVoice[]);
   const broad =
     featured.length + trending.length >= 4 ? [] : rankLibrary(await searchSharedVoices(key, { language: hint.language, gender: t.gender, page_size: 24 }), hint.language, hint.model);
