@@ -34,7 +34,7 @@
 3. **越用越懂你。** 预填什么、展示什么、出现哪些快捷方式，都从你的选择中学习：
    - 拿历史会话回放评估，不花一分钱；
    - 变差了就自动回滚；
-   - 你的画像像拼图一样逐块拼上，数据只存在你的设备里。
+   - 你读过的论文会连成一张学术星图，画像像拼图一样逐块拼上，数据只存在你的设备里。
 
 | | Evocast | NotebookLM | ElevenLabs GenFM | Podcastfy / open-notebook |
 |---|:-:|:-:|:-:|:-:|
@@ -58,7 +58,7 @@
 </tr>
 <tr>
 <td><b>正在播放：逐句同步</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/player-dark.png"><img src="docs/assets/player-light.png" /></picture></td>
-<td><b>你：越听越完整的画像拼图</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/you-dark.png"><img src="docs/assets/you-light.png" /></picture></td>
+<td><b>你：你的学术星图，和越听越完整的画像拼图</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/you-dark.png"><img src="docs/assets/you-light.png" /></picture></td>
 </tr>
 <tr>
 <td><b>首次打开：一句问候，一个拖放框</b><br/><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/home-empty-dark.png"><img src="docs/assets/home-empty-light.png" /></picture></td>
