@@ -1,7 +1,7 @@
 /**
  * Evocast CLI — the same harness as the web hub, run locally.
  *
- *   npm run podcast -- --file paper.pdf --persona engineer --lang zh,en --minutes 5
+ *   npm run podcast -- --file paper.pdf --persona engineer --lang zh,en --minutes 8
  *   npm run podcast -- --url https://arxiv.org/abs/2610.26770 --style idol --mode heavy --lens rsi,harness
  *   npm run podcast -- --file report.pdf --harness exported-harness.json   # use an evolved harness
  *   npm run podcast -- --file paper.pdf --demo                              # no keys, silent audio
@@ -71,7 +71,7 @@ const base: Omit<EpisodeRequest, "lang"> = {
   persona: (opt.persona ?? "engineer") as PersonaId,
   style: (opt.style ?? "studio") as StyleId,
   mode,
-  minutes: Number(opt.minutes ?? 5),
+  minutes: Number(opt.minutes ?? 8),
   lenses: opt.lens ? opt.lens.split(",") : [],
   direction: opt.direction ?? "",
 };

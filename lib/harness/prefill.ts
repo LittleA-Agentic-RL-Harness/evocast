@@ -11,10 +11,10 @@ Options:
 - persona: ${PERSONA_IDS.map((id) => `${id} (${PERSONAS[id].wants})`).join("; ")}
 - style: studio (calm premium interview) | idol (sweet, bright two-host radio)
 - langs: ["zh"], ["en"] or ["zh","en"]
-- minutes: 2–8
+- minutes: 8 (the key points) | 15 (a close reading: method and evidence) | 30 (a deep reading, section by section). Papers worth studying lean longer; news and short pieces lean 8.
 - lenses (0–3): ${LENSES.map((l) => `${l.id} = ${l.angle}`).join("; ")}
 - mode: lite | medium | heavy
-- direction: one short sentence (≤ 60 chars, in the person's interface language) naming the angle worth listening for in THIS document, or "".
+- direction: one short sentence (≤ 60 chars, in the person's interface language) naming the angle worth listening for in THIS document, given who this person is and what they keep coming back to. The person doesn't see or edit it: it quietly steers the episode, so make it specific to the document, never generic.
 
 Rules:
 ${g.prefill.rules.map((r) => `- ${r}`).join("\n")}
@@ -26,7 +26,7 @@ export function prefillUser(head: string, title: string, portrait: string, recen
 
 <person>
 ${portrait}
-Recent recipes (oldest → newest): ${recent.length ? recent.map((r) => JSON.stringify({ ...r, direction: undefined })).join(" | ") : "none"}
+Recent recipes (oldest → newest): ${recent.length ? recent.map((r) => JSON.stringify(r)).join(" | ") : "none"}
 </person>
 
 <document title="${title.replace(/"/g, "'")}">
@@ -44,6 +44,14 @@ const KEYWORDS: [RegExp, string][] = [
   [/dialogue|conversation|chatbot|customer service|对话|客服/i, "agents"],
   [/LLM|language model|transformer|大模型|benchmark/i, "llm"],
 ];
+
+/** What kind of document this is, from its first pages: it picks voices made for the job. */
+export function topicOf(head: string): "paper" | "report" | "news" | "other" {
+  if (/abstract|arxiv|et al\.|we propose|introduction|摘要|本文提出|关键词/i.test(head)) return "paper";
+  if (/market|revenue|CEO|McKinsey|survey|report|白皮书|研报|市场|营收/i.test(head)) return "report";
+  if (/reuters|bloomberg|associated press|breaking|announced|据.*报道|新华社|记者/i.test(head)) return "news";
+  return "other";
+}
 
 /** Keyless fallback used in demo mode and when the LLM prefill is unavailable. */
 export function heuristicRecipe(head: string, base: Recipe): { recipe: Recipe; reason: Record<Lang, string> } {

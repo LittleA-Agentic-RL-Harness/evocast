@@ -73,8 +73,11 @@ interface EvalResponse {
   briefUsd: number;
 }
 
+/** Replays are written at up to 8 minutes: a long episode's harness lessons show at that length too, at a fraction of the cost. */
+const REPLAY_MINUTES = 8;
+
 function requestOf(e: Episode): EpisodeRequest {
-  return { lang: e.lang, persona: e.persona, style: e.style, mode: e.mode, minutes: e.minutes, lenses: e.lenses, direction: e.direction };
+  return { lang: e.lang, persona: e.persona, style: e.style, mode: e.mode, minutes: Math.min(e.minutes, REPLAY_MINUTES), lenses: e.lenses, direction: e.direction };
 }
 
 /** Fixed validation set (HarnessPro keeps D_val constant across epochs): diverse, distinct sources. */
@@ -333,7 +336,7 @@ export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> 
 
 /** Rough upper bound on LLM spend for one epoch, from what past episodes cost. */
 export function estimateEpochUsd(episodes: Episode[], opts: { breadth: "quick" | "full"; valSize: number; parents: number }): number {
-  const avg = episodes.length ? episodes.reduce((n, e) => n + e.metrics.llmUsd, 0) / episodes.length : 0.2;
+  const avg = episodes.length ? episodes.reduce((n, e) => n + e.metrics.llmUsd * Math.min(1, REPLAY_MINUTES / e.minutes), 0) / episodes.length : 0.2;
   const plans = opts.breadth === "full" ? opts.parents * 3 : opts.parents;
   const evals = (plans + opts.parents + 1) * Math.min(opts.valSize, episodes.length || 1);
   return evals * avg * 0.7 + (1 + plans) * 0.05;

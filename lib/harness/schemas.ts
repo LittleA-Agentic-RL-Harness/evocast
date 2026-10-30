@@ -37,6 +37,27 @@ export const ScriptSchema = z.object({
   show_notes: z.array(z.string()),
 });
 
+const LinesSchema = z.array(z.object({ speaker: z.enum(["A", "B"]), text: z.string() }));
+
+export const VisualSchema = z.object({
+  at: z.number().int(),
+  figure: z.number().int(),
+  kind: z.enum(["flow", "compare", "example", "term", "none"]),
+  title: z.string(),
+  items: z.array(z.object({ label: z.string(), value: z.string() })),
+});
+
+/** First call of a chaptered episode: the plan and chapter 1. */
+export const EpisodePlanSchema = z.object({
+  title: z.string(),
+  show_notes: z.array(z.string()),
+  chapters: z.array(z.object({ title: z.string(), goal: z.string(), covers: z.array(z.string()) })),
+  lines: LinesSchema,
+  visuals: z.array(VisualSchema),
+});
+
+export const ChapterSchema = z.object({ lines: LinesSchema, visuals: z.array(VisualSchema) });
+
 export const GradeSchema = z.object({
   results: z.array(z.object({ id: z.string(), pass: z.boolean(), note: z.string() })),
 });
@@ -63,5 +84,7 @@ export const PlanSchema = z.object({
   ops: z.array(PatchOpSchema),
 });
 
+export type EpisodePlan = z.infer<typeof EpisodePlanSchema>;
+export type ChapterOut = z.infer<typeof ChapterSchema>;
 export type Diagnosis = z.infer<typeof DiagnosisSchema>;
 export type Plan = z.infer<typeof PlanSchema>;

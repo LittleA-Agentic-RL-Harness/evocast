@@ -30,6 +30,8 @@ export interface JSONCall<T> {
   maxTokens?: number;
   /** Deterministic stand-in used by the keyless demo provider. */
   mock: () => T;
+  /** Characters of output so far, as the model writes (streaming providers only). */
+  onText?: (chars: number) => void;
 }
 
 const ZERO = (model: string): Usage => ({ model, inputTokens: 0, outputTokens: 0, cachedTokens: 0, usd: 0 });
@@ -72,6 +74,8 @@ async function anthropicJSON<T>(cfg: LLMConfig, call: JSONCall<T>): Promise<{ da
       },
       ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
     });
+    let written = 0;
+    if (call.onText) stream.on("text", (delta) => call.onText?.((written += delta.length)));
     const msg = await stream.finalMessage();
 
     if (msg.stop_reason === "refusal") {

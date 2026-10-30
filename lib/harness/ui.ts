@@ -25,6 +25,15 @@ export interface Recipe {
 }
 
 export const RECIPE_FIELDS = ["persona", "style", "langs", "minutes", "lenses", "mode"] as const;
+
+/** The three lengths on offer: the key points, a close reading, a deep reading. */
+export const MINUTES = [8, 15, 30] as const;
+
+/** The offered length nearest to any minutes (older sessions asked for 2–8), moved `steps` options up or down. */
+export function snapMinutes(m: number, steps = 0): number {
+  const nearest = MINUTES.reduce((best, x, i) => (Math.abs(x - m) < Math.abs(MINUTES[best] - m) ? i : best), 0);
+  return MINUTES[Math.max(0, Math.min(MINUTES.length - 1, nearest + Math.round(steps)))];
+}
 export type RecipeField = (typeof RECIPE_FIELDS)[number];
 
 const PersonaEnum = z.enum(PERSONA_IDS as [PersonaId, ...PersonaId[]]);
@@ -35,7 +44,7 @@ export const RecipeSchema = z.object({
   persona: PersonaEnum,
   style: StyleEnum,
   langs: z.array(z.enum(["zh", "en"])).min(1).max(2),
-  minutes: z.number().int().min(2).max(8),
+  minutes: z.number().int().min(2).max(30),
   lenses: z.array(LensEnum).max(3),
   mode: z.enum(["lite", "medium", "heavy"]),
   direction: z.string().max(200),
@@ -60,7 +69,7 @@ export function coerceRecipe(raw: RecipeWire, fallback: Recipe): Recipe {
     persona: pick(raw.persona, PERSONA_IDS, fallback.persona),
     style: pick(raw.style, STYLE_IDS, fallback.style),
     langs: langs.length ? langs : fallback.langs,
-    minutes: Number.isFinite(raw.minutes) ? Math.max(2, Math.min(8, Math.round(raw.minutes))) : fallback.minutes,
+    minutes: Number.isFinite(raw.minutes) ? snapMinutes(raw.minutes) : fallback.minutes,
     lenses: [...new Set(raw.lenses.filter((l) => LENSES.some((x) => x.id === l)))].slice(0, 3),
     mode: pick(raw.mode, ["lite", "medium", "heavy"] as const, fallback.mode),
     direction: raw.direction.slice(0, 120),
@@ -119,7 +128,7 @@ export const DEFAULT_RECIPE = (lang: Lang): Recipe => ({
   persona: "engineer",
   style: "studio",
   langs: [lang],
-  minutes: 5,
+  minutes: 8,
   lenses: [],
   mode: "medium",
   direction: "",
@@ -142,6 +151,7 @@ export interface Session {
 // ------------------------------------------------------------------ prefill policy
 
 function same(field: RecipeField, a: Recipe, b: Recipe): boolean {
+  if (field === "minutes") return snapMinutes(a.minutes) === snapMinutes(b.minutes);
   const x = a[field];
   const y = b[field];
   if (Array.isArray(x) && Array.isArray(y)) return x.length === y.length && [...x].sort().join() === [...y].sort().join();
@@ -176,7 +186,7 @@ export function habitRecipe(history: Recipe[], halfLife: number, fallback: Recip
     persona: vote((r) => r.persona),
     style: vote((r) => r.style),
     langs: langsKey.split(",") as Lang[],
-    minutes: vote((r) => r.minutes),
+    minutes: vote((r) => snapMinutes(r.minutes)),
     lenses,
     mode: vote((r) => r.mode),
     direction: "",
@@ -192,7 +202,7 @@ export function blend(g: UIGenome, habit: Recipe, content: Recipe | null, sessio
     ...habit,
     persona: w >= 0.5 ? content.persona : habit.persona,
     lenses: w >= 0.5 ? content.lenses : w >= 0.25 ? [...new Set([...content.lenses.slice(0, 1), ...habit.lenses])].slice(0, 3) : habit.lenses,
-    minutes: Math.round(habit.minutes * (1 - w * 0.5) + content.minutes * w * 0.5),
+    minutes: snapMinutes(habit.minutes * (1 - w * 0.5) + content.minutes * w * 0.5),
     direction: content.direction,
   };
 }

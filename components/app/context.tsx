@@ -9,6 +9,9 @@ import { track } from "@/lib/client/track";
 import { DEFAULT_SETTINGS, getAudio, getEpisode, getProfile, getSessions, getTuneNotice, getUIGenome, listEpisodes, loadSettings, saveEpisode, saveSettings, saveTuneNotice, type Settings, type TuneNotice } from "@/lib/client/store";
 import { checkContentGuard } from "@/lib/client/evolution";
 import { undoTuning } from "@/lib/client/autotune";
+import { LiveAudio } from "@/lib/client/live";
+import type { Draft, Progress } from "@/lib/client/pipeline";
+import { silentMp3 } from "@/lib/tts/mp3";
 
 export type View = "home" | "listen" | "you" | "settings";
 
@@ -19,6 +22,27 @@ export interface PlayerState {
   duration: number;
   rate: number;
   sheet: boolean;
+  /** Playing while later chapters are still being written and voiced. */
+  live: LiveState | null;
+}
+
+export interface LiveState {
+  written: number;
+  voiced: number;
+  chapters: number;
+  /** Every chapter is voiced and the episode is saved. */
+  done: boolean;
+  /** Playback reached the last voiced second and waits for the next chapter. */
+  waiting: boolean;
+}
+
+/** The create run in progress (kept here so it outlives a visit to another tab). */
+export interface Run {
+  started: number;
+  progress: Progress | null;
+  error: string | null;
+  /** Saved episodes, once the run is done, and the chapters so far while it runs. */
+  draft: Draft | null;
 }
 
 interface Ctx {
@@ -49,6 +73,16 @@ interface Ctx {
   setSheet: (open: boolean) => void;
   /** Resolves once the listening so far is saved. */
   stop: () => Promise<void>;
+  run: Run | null;
+  setRun: (r: Run | null | ((r: Run | null) => Run | null)) => void;
+  /** Cancels the run in progress (set by whoever started it). */
+  cancel: { current: (() => void) | null };
+  /** Call inside the click that starts a run, so audio may start on its own later. */
+  prime: () => void;
+  /** Live playback: the first voiced chunk opens the player, later ones extend it, `liveEnd` closes the stream (with the saved episode, when there is one). */
+  liveAudio: (bytes: Uint8Array, seconds: number, d: Draft) => void;
+  liveDraft: (d: Draft) => void;
+  liveEnd: (e?: Episode) => void;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -68,7 +102,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [ui, setUI] = useState<UIGenome>(SEED_UI);
   const [profile, setProfile] = useState<ListenerProfile>(EMPTY_PROFILE);
   const [tuning, setTuning] = useState<TuneNotice | null>(null);
-  const [player, setPlayer] = useState<PlayerState>({ episode: null, playing: false, time: 0, duration: 0, rate: 1, sheet: false });
+  const [player, setPlayer] = useState<PlayerState>({ episode: null, playing: false, time: 0, duration: 0, rate: 1, sheet: false, live: null });
+  const [run, setRun] = useState<Run | null>(null);
+  const cancel = useRef<(() => void) | null>(null);
+  // The live stream, the estimated length while it grows, and the saved episode once it's done.
+  const liveRef = useRef<LiveAudio | null>(null);
+  const estimate = useRef(0);
+  const saved = useRef<Episode | null>(null);
+  // A live episode the person switched away from keeps generating, but no longer takes over the player.
+  const leftLive = useRef<string | null>(null);
+  const liveId = useRef<string | null>(null);
   // Listening writes are queued; they're tagged with the episode playing when queued (stop() clears it right after).
   const episodeRef = useRef<Episode | null>(null);
   episodeRef.current = player.episode;
@@ -149,10 +192,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const saveListening = async (ep: Episode | null, finished: boolean) => {
     const a = audioRef.current;
-    if (!ep || !a || !a.duration || !isFinite(a.duration)) return;
-    const heard = played.current / a.duration;
-    // Re-read: rating and chips may have been saved since this episode was loaded.
-    const cur = (await getEpisode(ep.id)) ?? ep;
+    const total = Math.max(liveRef.current ? estimate.current : 0, a && isFinite(a.duration) ? a.duration : 0);
+    if (!ep || !a || !total) return;
+    const heard = played.current / total;
+    // Re-read: rating and chips may have been saved since this episode was loaded. An episode still
+    // being made isn't saved yet: its listening is counted on and written once it is.
+    const cur = await getEpisode(ep.id);
+    if (!cur) return;
     const fb = cur.feedback ?? { rating: 0 as const, tags: [], note: "", listenedPct: 0, replays: 0, updatedAt: "" };
     const next = {
       ...cur,
@@ -164,7 +210,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         rate: a.playbackRate,
         backSeeks: (fb.backSeeks ?? 0) + backSeeks.current,
         skippedSec: Math.round((fb.skippedSec ?? 0) + skipped.current),
-        stoppedAt: Math.round(finished ? a.duration : a.currentTime),
+        stoppedAt: Math.round(finished ? total : a.currentTime),
         updatedAt: new Date().toISOString(),
       },
     };
@@ -189,6 +235,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await persistListening();
       const blob = await getAudio(e.id);
       if (!blob) return;
+      if (liveRef.current && player.episode) leftLive.current = player.episode.id;
+      liveRef.current?.detach();
+      liveRef.current = null;
       if (urlRef.current) URL.revokeObjectURL(urlRef.current);
       urlRef.current = URL.createObjectURL(blob);
       played.current = 0;
@@ -199,11 +248,80 @@ export function AppProvider({ children }: { children: ReactNode }) {
       track("play", { lang: e.lang, persona: e.persona, style: e.style, seconds: Math.round(e.durationSec) });
       a.src = urlRef.current;
       a.playbackRate = e.feedback?.rate ?? player.rate;
-      setPlayer((p) => ({ ...p, episode: e, time: 0, duration: e.durationSec, sheet: openSheet || p.sheet, rate: a.playbackRate }));
+      // Pick up where it was left, unless it was heard to the end (or nearly).
+      const at = e.feedback?.stoppedAt ?? 0;
+      if (at > 15 && at < e.durationSec - 20) {
+        a.currentTime = at;
+        lastPos.current = at;
+      }
+      setPlayer((p) => ({ ...p, episode: e, time: 0, duration: e.durationSec, sheet: openSheet || p.sheet, rate: a.playbackRate, live: null }));
       await a.play().catch(() => undefined);
     },
     [player.episode, player.rate, persistListening],
   );
+
+  const prime = useCallback(() => {
+    const a = audioRef.current;
+    // Browsers only let audio start by itself on an element that has played inside a click.
+    if (!a || a.src) return;
+    const url = URL.createObjectURL(new Blob([silentMp3(0.1) as BlobPart], { type: "audio/mpeg" }));
+    a.src = url;
+    a.play()
+      .then(() => a.pause())
+      .catch(() => undefined)
+      .finally(() => URL.revokeObjectURL(url));
+  }, []);
+
+  const liveState = (d: Draft, done = false): LiveState => ({ written: d.written, voiced: d.voiced, chapters: d.chapters, done, waiting: false });
+
+  const liveAudio = useCallback(
+    (bytes: Uint8Array, seconds: number, d: Draft) => {
+      const a = audioRef.current;
+      if (!a || leftLive.current === d.episode.id) return;
+      estimate.current = d.estimatedSec;
+      if (!liveRef.current || liveId.current !== d.episode.id) {
+        // The first chunk: switch the player to this episode (closing an earlier live one) and start.
+        void persistListening();
+        liveRef.current?.detach();
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+        saved.current = null;
+        played.current = 0;
+        lastPos.current = 0;
+        backSeeks.current = 0;
+        skipped.current = 0;
+        reached.current = new Set();
+        liveRef.current = new LiveAudio(a);
+        liveId.current = d.episode.id;
+        a.playbackRate = player.rate;
+        track("play", { lang: d.episode.lang, persona: d.episode.persona, style: d.episode.style, seconds: d.estimatedSec, live: true });
+        setPlayer((p) => ({ ...p, episode: d.episode, time: 0, duration: d.estimatedSec, sheet: true, live: liveState(d) }));
+        a.play().catch(() => undefined);
+      } else {
+        setPlayer((p) => (p.episode?.id === d.episode.id ? { ...p, episode: d.episode, duration: Math.max(d.estimatedSec, p.duration), live: { ...liveState(d), waiting: p.live?.waiting ?? false } } : p));
+      }
+      liveRef.current.append(bytes, seconds);
+    },
+    [player.rate, persistListening], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const liveDraft = useCallback((d: Draft) => {
+    estimate.current = d.estimatedSec;
+    setPlayer((p) => (p.episode?.id === d.episode.id && p.live ? { ...p, episode: d.episode, duration: Math.max(d.estimatedSec, p.time), live: { ...liveState(d), waiting: p.live.waiting } } : p));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const liveEnd = useCallback((e?: Episode) => {
+    if (!liveRef.current || (e && e.id !== liveId.current)) return;
+    liveRef.current.end();
+    if (!e) {
+      // Stopped early: what was voiced plays to its end, and nothing more is coming.
+      setPlayer((p) => (p.live ? { ...p, live: { ...p.live, done: true, waiting: false } } : p));
+      return;
+    }
+    saved.current = e;
+    estimate.current = e.durationSec;
+    setPlayer((p) => (p.episode?.id === e.id ? { ...p, episode: e, duration: e.durationSec, live: p.live ? { ...p.live, written: p.live.chapters, voiced: p.live.chapters, done: true } : null } : p));
+  }, []);
 
   const toggle = useCallback(() => {
     const a = audioRef.current;
@@ -215,7 +333,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const seek = useCallback((t: number) => {
     const a = audioRef.current;
     if (!a) return;
-    a.currentTime = Math.max(0, Math.min(t, a.duration || t));
+    const live = liveRef.current;
+    if (live && !live.has(t)) {
+      const e = saved.current;
+      if (!e) {
+        // Not voiced yet (or dropped long ago): go as far as there is.
+        a.currentTime = Math.max(0, Math.min(t, live.edge - 0.5));
+        return;
+      }
+      // Finished: continue from the saved file, which has all of it.
+      const wasPlaying = !a.paused;
+      void getAudio(e.id).then((blob) => {
+        if (!blob || liveRef.current !== live) return;
+        live.detach();
+        liveRef.current = null;
+        urlRef.current = URL.createObjectURL(blob);
+        a.src = urlRef.current;
+        a.addEventListener("loadedmetadata", () => {
+          a.currentTime = Math.max(0, Math.min(t, a.duration || t));
+          lastPos.current = a.currentTime;
+          if (wasPlaying) a.play().catch(() => undefined);
+        }, { once: true });
+      });
+      return;
+    }
+    const end = isFinite(a.duration) ? a.duration : t;
+    a.currentTime = Math.max(0, Math.min(t, end));
   }, []);
 
   const skip = useCallback((by: number) => {
@@ -251,7 +394,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const lang = settings.uiLang;
   const T = useCallback((zh: string, en: string) => (lang === "zh" ? zh : en), [lang]);
 
-  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop };
+  const value: Ctx = { ready, settings, update, lang, T, view, go, episodes, sessions, ui, profile, tuning, dismissTuning, undoTuning: undo, refresh, surfaces, player, play, toggle, seek, skip, setRate, setSheet, stop, run, setRun, cancel, prime, liveAudio, liveDraft, liveEnd };
 
   return (
     <AppCtx.Provider value={value}>
@@ -260,6 +403,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ref={audioRef}
         preload="metadata"
         onPlay={() => setPlayer((p) => ({ ...p, playing: true }))}
+        onWaiting={() => setPlayer((p) => (p.live && !p.live.done ? { ...p, live: { ...p.live, waiting: true } } : p))}
+        onPlaying={() => setPlayer((p) => (p.live?.waiting ? { ...p, live: { ...p.live, waiting: false } } : p))}
         onPause={() => {
           setPlayer((p) => ({ ...p, playing: false }));
           persistListening();
@@ -271,8 +416,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           else if (d <= -1) backSeeks.current++;
           else if (d >= 2.5) skipped.current += d;
           lastPos.current = a.currentTime;
-          if (isFinite(a.duration) && a.duration > 0) milestone((a.currentTime / a.duration) * 100);
-          setPlayer((p) => ({ ...p, time: a.currentTime, duration: isFinite(a.duration) ? a.duration : p.duration }));
+          const total = Math.max(liveRef.current ? estimate.current : 0, isFinite(a.duration) ? a.duration : 0);
+          if (total > 0) milestone((a.currentTime / total) * 100);
+          setPlayer((p) => ({ ...p, time: a.currentTime, duration: total || p.duration }));
         }}
         onEnded={() => {
           milestone(100);

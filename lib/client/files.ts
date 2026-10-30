@@ -31,10 +31,11 @@ export async function pickedFromDrop(dt: DataTransfer): Promise<Picked[]> {
   return out;
 }
 
-/** Parse on this device: nothing is uploaded, and size is bounded only by memory. */
-export async function readPicked(list: Picked[]): Promise<{ docs: SourceDoc[]; skipped: string[]; label?: string }> {
+/** Parse on this device: nothing is uploaded, and size is bounded only by memory. PDFs are kept for their figures. */
+export async function readPicked(list: Picked[]): Promise<{ docs: SourceDoc[]; skipped: string[]; label?: string; pdfs: Uint8Array[] }> {
   const docs: SourceDoc[] = [];
   const skipped: string[] = [];
+  const pdfs: Uint8Array[] = [];
   const many = list.length > 1;
   for (const { file, path } of list.slice(0, 300)) {
     if (file.size > MAX_FILE_BYTES) {
@@ -42,7 +43,11 @@ export async function readPicked(list: Picked[]): Promise<{ docs: SourceDoc[]; s
       continue;
     }
     try {
-      const got = await extractFile(path, new Uint8Array(await file.arrayBuffer()), file.type);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const pdf = bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
+      // The PDF reader may take ownership of its bytes: the figures get their own copy.
+      const got = await extractFile(path, pdf ? bytes.slice() : bytes, file.type);
+      if (pdf && got.length && pdfs.length < 3) pdfs.push(bytes);
       if (!got.length) skipped.push(path);
       docs.push(...got.map((d) => (many && got.length === 1 ? { ...d, name: path.replace(/\.[a-z0-9]+$/i, "") } : d)));
     } catch {
@@ -50,7 +55,7 @@ export async function readPicked(list: Picked[]): Promise<{ docs: SourceDoc[]; s
     }
   }
   const tops = new Set(list.map((p) => (p.path.includes("/") ? p.path.split("/")[0] : "")));
-  return { docs, skipped, label: tops.size === 1 && !tops.has("") ? [...tops][0] : undefined };
+  return { docs, skipped, label: tops.size === 1 && !tops.has("") ? [...tops][0] : undefined, pdfs };
 }
 
 /** Every whitespace/comma-separated token is a link → the list; otherwise null (it's text). */
