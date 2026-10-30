@@ -103,8 +103,9 @@ vercel firewall publish --yes
 | 价格 | Gateway：每千字符 0.04 美元 | 访客自己的套餐；按量付费的 API 官方价格是每千字符 0.08 美元 |
 | 换声音（推荐、声音库、声音设计、克隆） | 需要自己的 Key | ✓ |
 
-- **默认声音来自 Voice Library。** 试用下可以正常使用。用自己的 Key 时，通过 API 使用声音库的声音需要 ElevenLabs 付费套餐；免费套餐的用户请在「设置 → 声音」里换成自己的声音。
-- **声音库里的声音可能被作者下架。** 如果某个默认位置开始持续失败，在 `lib/harness/styles.ts` 里换掉它的 id。
+- **默认声音来自 Voice Library。** 试用和付费套餐都能正常使用。免费套餐不能通过 API 使用声音库声音（ElevenLabs 返回 `402 paid_plan_required`），所以每个位置默认用账户里最接近的声音；账户里一个声音都没有时（2026 年 3 月之后注册的新账户没有默认声音），可以一键用 Voice Design 设计两位主播，所有套餐都能用。
+- **声音库里的声音可能被作者下架。** 生成时遇到 `voice_not_found`，会把这个位置换成它的首选（试用下换成 `lib/tts/voices.ts` 里 `SHELF` 中核验过的官方声音），为这位访客保存下来，并用一行字说明。再到 `lib/harness/styles.ts` 里换掉默认 id，新访客也就能用了。
+- **检查默认声音**：`npm run check:voices` 让每个默认声音和备选声音各说一个词（总共约 50 个字符；用 `vercel env pull` 拿到的 Gateway token，或者付费套餐的 `ELEVENLABS_API_KEY`）。仓库配置了 `AI_GATEWAY_API_KEY` 或 `ELEVENLABS_API_KEY` secret 后，每周的 *Voices* 工作流会自动跑；没有就跳过。
 - **商用。** 用自己 Key 时取决于访客自己的 ElevenLabs 套餐；试用时适用 Vercel 的 AI 产品条款和服务商条款。
 
 ## 数据库：Neon
@@ -130,7 +131,7 @@ Neon 免费档包含 1 GB 存储、每月 100 CU 小时计算和 5 GB 出站流�
 | 一大早就提示「今天的试用名额已满」 | 后台 → 试用算力 | 提高 `TRIAL_DAILY_USD` 和 Gateway 项目预算；流量像是机器刷的，就加 Firewall 规则 |
 | 所有人都看不到试用 | `GET /api/trial` | 数据库连得上吗？Neon 被暂停了吗？是否设置了 `TRIAL=off`？ |
 | 日志里出现 `402` | Gateway → Budgets，以及额度余额 | 充值、开自动充值，或提高预算 |
-| 配音失败 | 后台 → 生成 → 失败原因；Vercel 日志里的 `/api/tts` | 偶发错误会自动重试；某个声音 id 持续失败，说明已被下架，换掉它 |
+| 配音失败 | 后台 → 生成 → 失败原因；Vercel 日志里的 `/api/tts`；`npm run check:voices` | 偶发错误会自动重试；被下架的声音会为每位访客自动替换，再到 `lib/harness/styles.ts` 里为所有人换掉它的 id |
 | 埋点停了 | Neon 控制台的用量 | 从免费档升级，或等到下个周期 |
 | 真实访客看到「请求太频繁了」 | Vercel → Firewall 里这条规则的流量 | 很多人共用一个出口地址（公司、校园）：用 `vercel firewall rules edit "Work routes per IP" --rate-limit-requests 120 --yes` 调高上限，再运行 `vercel firewall publish --yes` |
 | 后台登录不了 | — | 设置新的 `ADMIN_PASSWORD` 并重新部署 |

@@ -10,9 +10,10 @@ npm run dev          # http://localhost:3000 — without keys the welcome screen
 npm test             # unit tests (node:test via tsx)
 npm run typecheck
 npm run build
+npm run check:voices # do the default voices still speak? needs a Gateway token or an ElevenLabs key; skips without
 ```
 
-Append `?still` to any URL to render animations at their end state (handy for screenshots and automated checks).
+Append `?still` to any URL to skip the remaining fades and turn analytics off (handy for screenshots and automated checks).
 `desktop/` is the macOS app (Electron) — see the README. To try the free trial locally, connect a Postgres in `.env.development.local` and pull a Gateway token with `vercel env pull` (it lasts 12 hours).
 
 ## Where things live
@@ -23,6 +24,8 @@ Append `?still` to any URL to render animations at their end state (handy for sc
 | Interface harness (prefill, disclosure, portrait) | `lib/harness/ui.ts`, `prefill.ts`, `portrait.ts` |
 | Server pipeline & evolution agents | `lib/server/pipeline.ts`, `app/api/*` |
 | ElevenLabs integration (direct and via AI Gateway) | `lib/tts/` |
+| Choosing voices (ranking, free-plan defaults, trial shelf) | `lib/tts/voices.ts`, defaults in `lib/harness/styles.ts` |
+| Background tuning and its live guard | `lib/harness/autotune.ts`, `lib/client/autotune.ts` |
 | Free trial, analytics, admin | `lib/server/trial.ts`, `lib/analytics/`, `components/admin/` |
 | UI (Apple-style design system) | `components/ui/`, `components/app/`, `app/globals.css` |
 
@@ -30,7 +33,7 @@ Append `?still` to any URL to render animations at their end state (handy for sc
 
 - **Every harness change must stay measurable.** New evolvable knobs go through the whitelisted patch editor (`EDITABLE_PATHS` / `applyUIPatch`) with schema bounds and a unit test.
 - **Keep keys client-side.** Never log, persist or forward keys anywhere except the provider being called.
-- **Design**: use the tokens in `app/globals.css` (Fibonacci spacing, √φ type scale, system colours) and the springs in `components/ui/kit.tsx`. Respect `prefers-reduced-motion` and `prefers-reduced-transparency`.
+- **Design**: calm by default. Nothing moves: no new animation or hover effects; things that appear use the one short `fade` in `components/ui/kit.tsx`. Prefer fewer controls. Use the tokens in `app/globals.css` (Fibonacci spacing, √φ type scale, system colours) and respect `prefers-reduced-transparency`.
 - **Tests**: add or update a test in `tests/` for logic changes. `npm test && npm run typecheck && npm run build` must pass.
 - **Commits/PRs**: small, descriptive; explain the "why". Link an issue when there is one.
 

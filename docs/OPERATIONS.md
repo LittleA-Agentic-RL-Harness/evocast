@@ -103,8 +103,9 @@ Credits are prepaid. At a full $5 site cap, the trial costs about $150 a month. 
 | Price | Gateway: $0.04 / 1k chars | the visitor's plan; pay‑as‑you‑go API list price $0.08 / 1k chars |
 | Changing voices (recommendations, Voice Library, Voice Design, cloning) | needs an own key | ✓ |
 
-- **Default voices are Voice Library voices.** They work on the trial. With an own key, using library voices through the API needs a paid ElevenLabs plan; on a free plan, pick your own voices in Settings → Voices.
-- **Library voices can be withdrawn by their creators.** If a default seat starts failing, swap its id in `lib/harness/styles.ts`.
+- **Default voices are Voice Library voices.** They work on the trial and on paid plans. A free plan can't use library voices through the API (ElevenLabs answers `402 paid_plan_required`), so each seat defaults to the closest voice in the account; an account with no voices (new accounts since March 2026 have none) gets one click to design both hosts with Voice Design, which works on every plan.
+- **Library voices can be withdrawn by their creators.** A run that hits `voice_not_found` switches that seat to its top pick (on the trial, a vetted official voice from `SHELF` in `lib/tts/voices.ts`), saves it for that visitor and says so in one line. Swap the default id in `lib/harness/styles.ts` so new visitors get a working voice too.
+- **Checking the defaults**: `npm run check:voices` makes every default and shelf voice say one word (about 50 characters in all, through the Gateway with `vercel env pull`'s token, or with `ELEVENLABS_API_KEY` on a paid plan). The weekly *Voices* workflow runs it once the repository has an `AI_GATEWAY_API_KEY` or `ELEVENLABS_API_KEY` secret; without one it skips.
 - **Commercial use** follows the visitor's ElevenLabs plan for own keys, and Vercel's AI Product Terms plus the provider's terms for the trial.
 
 ## Database: Neon
@@ -130,7 +131,7 @@ The Neon Free plan includes 1 GB of storage, 100 CU‑hours a month and 5 GB of 
 | "Today's free trial is full" early in the day | Admin → Trial compute | raise `TRIAL_DAILY_USD` and the Gateway project budget; add a Firewall rule if traffic looks automated |
 | Trial unavailable everywhere | `GET /api/trial` | database reachable? Neon compute suspended? `TRIAL=off`? |
 | `402` in logs | Gateway → Budgets, credit balance | top up, enable auto top‑up, or raise the budget |
-| Voice step fails | Admin → Generation → Failures; Vercel logs for `/api/tts` | transient errors retry on their own; a voice id that keeps failing was withdrawn, so swap it |
+| Voice step fails | Admin → Generation → Failures; Vercel logs for `/api/tts`; `npm run check:voices` | transient errors retry on their own; a withdrawn voice is replaced per visitor automatically, so swap its id in `lib/harness/styles.ts` for everyone |
 | Analytics stopped | Neon console usage | upgrade from Free, or wait for the next period |
 | Real visitors see "Too many requests" | Vercel → Firewall, traffic for the rule | many people share one address (an office, a campus): raise the limit with `vercel firewall rules edit "Work routes per IP" --rate-limit-requests 120 --yes`, then `vercel firewall publish --yes` |
 | Admin locked out | — | set a new `ADMIN_PASSWORD` and redeploy |
