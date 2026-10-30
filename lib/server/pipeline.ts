@@ -109,12 +109,12 @@ async function writeScript(cfg: LLMConfig, h: Harness, brief: Brief, req: Episod
   return { script, usage: r.usage };
 }
 
-export async function gradeScript(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest) {
+export async function gradeScript(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest, figures: FigureRef[] = []) {
   const suite = buildTestSuite(docTests, req);
   const rules = checkRules(script, req, h);
   const r = await callJSON(cfg, {
     system: gradeSystem(),
-    user: gradeUser(brief, script, suite),
+    user: gradeUser(brief, script, suite, figures),
     schema: GradeSchema,
     effort: "low",
     maxTokens: 8000,
@@ -243,7 +243,7 @@ export async function writeChapter(
     const covers = new Set(plan.chapters[k]?.covers ?? []);
     const suite = buildTestSuite(x.tests, x.req).filter((t) => covers.has(t.id) || t.kind === "accuracy" || t.kind === "forbidden");
     if (suite.length) {
-      const g = await gradeLines(cfg, h, x.brief, chapter.lines, suite);
+      const g = await gradeLines(cfg, h, x.brief, chapter.lines, suite, x.figures);
       usage = addUsage(usage, g.usage);
       const failures = g.results.filter((t) => !t.pass).map((t) => ({ check: suite.find((s) => s.id === t.id)?.check ?? t.id, note: t.note }));
       if (failures.length) {
@@ -257,11 +257,11 @@ export async function writeChapter(
   return { chapter, usage, revisions };
 }
 
-async function gradeLines(cfg: LLMConfig, h: Harness, brief: Brief, lines: ScriptLine[], suite: TestCase[]) {
+async function gradeLines(cfg: LLMConfig, h: Harness, brief: Brief, lines: ScriptLine[], suite: TestCase[], figures: FigureRef[]) {
   const script: Script = { title: "", lang: "en", lines, show_notes: [] };
   const r = await callJSON(cfg, {
     system: gradeSystem(),
-    user: gradeUser(brief, script, suite),
+    user: gradeUser(brief, script, suite, figures),
     schema: GradeSchema,
     effort: "low",
     maxTokens: 8000,
@@ -271,8 +271,8 @@ async function gradeLines(cfg: LLMConfig, h: Harness, brief: Brief, lines: Scrip
 }
 
 /** The whole chaptered episode against the full suite, for the record (Checks) and for self-evolution. */
-export async function gradeEpisode(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest) {
-  const graded = await gradeScript(cfg, h, brief, docTests, script, req);
+export async function gradeEpisode(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest, figures: FigureRef[] = []) {
+  const graded = await gradeScript(cfg, h, brief, docTests, script, req, figures);
   return { results: graded.results, passRate: graded.results.length ? passRate(graded.results) : null, usage: graded.usage };
 }
 

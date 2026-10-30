@@ -130,7 +130,7 @@ export function effectiveTtsModel(h: Harness, mode: EpisodeRequest["mode"], s: S
 }
 
 /** Roughly how much JSON each call writes, so streamed characters can move a progress bar honestly. */
-const EXPECT = { brief: 6500, overhead: 700, perChapter: 140 };
+const EXPECT = { brief: 10_000, overhead: 700, perChapter: 140 };
 const fraction = (chars: number, expected: number) => Math.min(0.97, chars / expected);
 
 /** A stable key for a source read under one set of brief settings, so the same document is never read twice. */

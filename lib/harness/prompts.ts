@@ -209,9 +209,11 @@ export function gradeSystem(): string {
 - "note": one short sentence of evidence (quote a few words of the script or say what is missing).`;
 }
 
-export function gradeUser(brief: Brief, script: Script, tests: TestCase[]): string {
+export function gradeUser(brief: Brief, script: Script, tests: TestCase[], figures: FigureRef[] = []): string {
   const lines = script.lines.map((l, i) => `${i + 1}. ${l.speaker}: ${l.text}`).join("\n");
-  return `<brief>\n${JSON.stringify(brief)}\n</brief>\n\n<script title="${script.title.replace(/"/g, "'")}">\n${lines}\n</script>\n\n<tests>\n${tests
+  // Figures are shown beside the transcript, so naming one ("Table 2") is not an invented fact; their captions are source text.
+  const figs = figures.length ? `<figures note="shown to the listener while discussed; their captions are part of the source">\n${figures.map((f) => `${f.label}: ${f.caption}`).join("\n")}\n</figures>\n\n` : "";
+  return `<brief>\n${JSON.stringify(brief)}\n</brief>\n\n${figs}<script title="${script.title.replace(/"/g, "'")}">\n${lines}\n</script>\n\n<tests>\n${tests
     .map((t) => `${t.id} [${t.kind}] ${t.check}`)
     .join("\n")}\n</tests>\n\nReturn one result per test id.`;
 }
