@@ -274,7 +274,7 @@ export function layout(a: Atlas): Layout {
     mine.forEach((f, k) => {
       const n = count.get(f.id) ?? 0;
       const angle = angleOf(d.id) + (k - (mine.length - 1) / 2) * spread;
-      const r = 290 - Math.min(130, 42 * Math.log2(1 + n)) + (k % 2) * 46;
+      const r = 262 - Math.min(120, 40 * Math.log2(1 + n)) + (k % 2) * 46;
       fields.push({ id: f.id, domain: d.id, count: n, r: 7 + 3 * Math.sqrt(n), ...polar(angle, r) });
     });
   }
@@ -297,25 +297,39 @@ export interface Label {
   id: string;
   x: number;
   y: number;
-  anchor: "start" | "end";
+  anchor: "start" | "end" | "middle";
 }
 
+/** Rough rendered width of a label: CJK characters are square, Latin ones a bit over half as wide. */
+export const textWidth = (text: string, size: number) => [...text].reduce((n, ch) => n + (/[\u3400-\u9fff\uff00-\uffef]/.test(ch) ? 1 : 0.58), 0) * size;
+
 /**
- * Field labels beside their stars, on the outer side, then pushed apart vertically on each side so
- * neighbours never overlap (`gap` is a line height in map units).
+ * Field labels beside their stars, on the side facing the centre (realm names own the rim); near the
+ * vertical axis, centred under or over the star. Busier fields are placed first, and a label that
+ * would collide with one already placed moves up or down a line until it's clear.
  */
-export function labelsFor(fields: Layout["fields"], gap: number): Label[] {
-  const out: Label[] = [];
-  for (const side of ["end", "start"] as const) {
-    const mine = fields.filter((f) => (side === "end" ? f.x < C : f.x >= C)).sort((a, b) => a.y - b.y);
-    let last = -Infinity;
-    for (const f of mine) {
-      const y = Math.max(f.y + gap * 0.35, last + gap);
-      last = y;
-      out.push({ id: f.id, x: f.x + (side === "end" ? -(f.r + 9) : f.r + 9), y, anchor: side });
+export function labelsFor(fields: Layout["fields"], names: Map<string, string>, size: number): Label[] {
+  const placed: { l: Label; x0: number; x1: number; y0: number; y1: number }[] = [];
+  const box = (l: Label, w: number) => {
+    const x0 = l.anchor === "start" ? l.x : l.anchor === "end" ? l.x - w : l.x - w / 2;
+    return { l, x0, x1: x0 + w, y0: l.y - size, y1: l.y + size * 0.3 };
+  };
+  const hits = (b: ReturnType<typeof box>) => placed.some((p) => b.x0 < p.x1 && b.x1 > p.x0 && b.y0 < p.y1 && b.y1 > p.y0);
+  for (const f of [...fields].sort((a, b) => b.count - a.count)) {
+    const w = textWidth(names.get(f.id) ?? "", size);
+    const axis = Math.abs(f.x - C) < 70;
+    const left = f.x < C;
+    const base: Label = axis
+      ? { id: f.id, x: f.x, y: f.y < C ? f.y + f.r + size * 1.2 : f.y - f.r - size * 0.6, anchor: "middle" }
+      : { id: f.id, x: f.x + (left ? f.r + 9 : -(f.r + 9)), y: f.y + size * 0.35, anchor: left ? "start" : "end" };
+    let best = box(base, w);
+    for (const k of [1, -1, 2, -2, 3, -3]) {
+      if (!hits(best)) break;
+      best = box({ ...base, y: base.y + k * size * 1.35 }, w);
     }
+    placed.push(best);
   }
-  return out;
+  return placed.map((p) => p.l);
 }
 
 /** A gentle arc between two points, bowed toward the centre so bridges read as crossing the map. */

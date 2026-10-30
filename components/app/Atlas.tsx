@@ -6,7 +6,7 @@ import { useApp } from "./context";
 import { fade } from "../ui/kit";
 import { Play } from "../ui/icons";
 import type { Episode, Lang } from "@/lib/types";
-import { arc, DOMAINS, domainColor, labelsFor, layout, LEVELS, linksOf, papersOf, progressOf, RING, rulesAtlas, SIZE, starfield, type Atlas, type DomainId, type Link, type Paper } from "@/lib/harness/atlas";
+import { arc, DOMAINS, domainColor, labelsFor, layout, textWidth, LEVELS, linksOf, papersOf, progressOf, RING, rulesAtlas, SIZE, starfield, type Atlas, type DomainId, type Link, type Paper } from "@/lib/harness/atlas";
 import { drawAtlas, loadAtlas, stale } from "@/lib/client/atlas";
 import { track } from "@/lib/client/track";
 
@@ -190,7 +190,7 @@ function AtlasMap({ atlas, links, sel, setSel, next }: { atlas: Atlas; links: Li
   const at = useMemo(() => new Map([...L.fields, ...L.papers].map((n) => [n.id, n])), [L]);
   const fieldName = new Map(atlas.fields.map((f) => [f.id, f.name]));
   const topFields = new Set([...L.fields].sort((a, b) => b.count - a.count).slice(0, compact ? 6 : 16).map((f) => f.id));
-  const labels = useMemo(() => new Map(labelsFor(L.fields.filter((f) => topFields.has(f.id)), fs(15)).map((l) => [l.id, l])), [L, width]); // eslint-disable-line react-hooks/exhaustive-deps
+  const labels = useMemo(() => new Map(labelsFor(L.fields.filter((f) => topFields.has(f.id)), fieldName, fs(11.5)).map((l) => [l.id, l])), [L, width]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // What a selection touches stays bright; everything else steps back.
   const related = useMemo(() => {
@@ -300,7 +300,7 @@ function AtlasMap({ atlas, links, sel, setSel, next }: { atlas: Atlas; links: Li
           const anchor = d.label.x < 470 ? "end" : d.label.x > 530 ? "start" : "middle";
           // Keep the whole label on the map: estimate its width and slide it inward if it would run off.
           const name = realm(d.id)[lang];
-          const w = [...name].reduce((n, ch) => n + (/[\u3400-\u9fff]/.test(ch) ? 1 : 0.58), 0) * fs(10.5);
+          const w = textWidth(name, fs(10.5));
           const lx = anchor === "end" ? Math.max(d.label.x, w + 10) : anchor === "start" ? Math.min(d.label.x, SIZE - w - 10) : d.label.x;
           const suggested = next === d.id && !d.lit;
           if (compact && !d.lit && !suggested) return <circle key={d.id} cx={d.x} cy={d.y} r={3.5} fill="none" stroke="rgba(255,255,255,.3)" />;

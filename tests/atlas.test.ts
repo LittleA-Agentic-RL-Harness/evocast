@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DOMAINS, fromWire, layout, linksOf, papersOf, progressOf, RING, rulesAtlas, SIZE, type AtlasWire } from "../lib/harness/atlas";
+import { DOMAINS, fromWire, labelsFor, layout, linksOf, papersOf, progressOf, RING, rulesAtlas, SIZE, textWidth, type AtlasWire } from "../lib/harness/atlas";
 import type { Episode } from "../lib/types";
 
 const brief = (title: string, oneLiner: string, terms: string[], type: Episode["brief"]["source_type"] = "paper"): Episode["brief"] => ({
@@ -139,4 +139,25 @@ test("atlas game: points, level, badges and the path across realms come from rea
   const empty = progressOf(rulesAtlas([], "en"), [], []);
   assert.equal(empty.xp, 0);
   assert.equal(empty.level, 0);
+});
+
+test("atlas labels face the centre and never overlap, even for crowded fields", () => {
+  const f = (id: string, x: number, y: number, count = 1) => ({ id, x, y, r: 8, domain: "ai" as const, count });
+  const fields = [f("a", 300, 300, 3), f("b", 310, 306), f("c", 520, 296), f("d", 700, 500), f("e", 505, 760)];
+  const names = new Map([["a", "神经网络架构与机器翻译"], ["b", "通用技术与技术扩散"], ["c", "Reinforcement learning"], ["d", "Recommender systems"], ["e", "劳动经济学"]]);
+  const size = 18;
+  const L = labelsFor(fields, names, size);
+  assert.equal(L.find((l) => l.id === "a")!.anchor, "start", "left of centre: the label runs inward, to the right");
+  assert.equal(L.find((l) => l.id === "d")!.anchor, "end");
+  assert.equal(L.find((l) => l.id === "c")!.anchor, "middle", "near the vertical axis: centred");
+  const boxes = L.map((l) => {
+    const w = textWidth(names.get(l.id)!, size);
+    const x0 = l.anchor === "start" ? l.x : l.anchor === "end" ? l.x - w : l.x - w / 2;
+    return { x0, x1: x0 + w, y0: l.y - size, y1: l.y + size * 0.3 };
+  });
+  for (let i = 0; i < boxes.length; i++)
+    for (let j = i + 1; j < boxes.length; j++) {
+      const [p, q] = [boxes[i], boxes[j]];
+      assert.ok(!(p.x0 < q.x1 && p.x1 > q.x0 && p.y0 < q.y1 && p.y1 > q.y0), `${L[i].id} and ${L[j].id} overlap`);
+    }
 });

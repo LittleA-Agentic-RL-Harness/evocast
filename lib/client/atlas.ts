@@ -23,8 +23,23 @@ export function stale(a: Atlas | undefined, episodes: Episode[], lang: Lang): bo
  * Draw the atlas for the current library: the keyless map at once, then the model's (one small call
  * on whatever compute the person uses, the trial included). Saved on the device.
  */
-export async function drawAtlas(settings: Settings, episodes: Episode[], lang: Lang): Promise<Atlas> {
+export function drawAtlas(settings: Settings, episodes: Episode[], lang: Lang): Promise<Atlas> {
   const papers = papersOf(episodes);
+  const key = `${lang}|${papers.map((p) => p.id).join()}`;
+  // One draw per library at a time: a quick revisit (or React running an effect twice) waits for it.
+  if (inflight?.key !== key)
+    inflight = {
+      key,
+      map: draw(settings, papers, lang).finally(() => {
+        if (inflight?.key === key) inflight = null;
+      }),
+    };
+  return inflight.map;
+}
+
+let inflight: { key: string; map: Promise<Atlas> } | null = null;
+
+async function draw(settings: Settings, papers: ReturnType<typeof papersOf>, lang: Lang): Promise<Atlas> {
   const rules = rulesAtlas(papers, lang);
   if (!papers.length || settings.keys.llmProvider === "mock" || Date.now() - failedAt < RETRY_MS) return rules;
   try {
