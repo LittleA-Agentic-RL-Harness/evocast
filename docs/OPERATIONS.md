@@ -79,6 +79,8 @@ Model cost is mostly reading the source, and trial sources are cut at 100k chara
 
 **Longer episodes** (8, 15, 30 minutes) are written and voiced chapter by chapter, and play from chapter 1. At list prices (estimated, not yet measured): reading the source once is about $0.25, then each 8 minutes adds about $0.15–0.20 of model cost; voice is about $0.01 a minute in Chinese and $0.033 in English. A 30-minute Chinese episode comes to about $1.10 and an English one to about $1.70, which is more than the default $1.50 a visitor gets per day, so the trial doesn't offer it (own keys do). Raise `TRIAL_VISITOR_USD` to offer it. Another length or language of the same source doesn't read it again (the brief is cached in the browser).
 
+**The research atlas** on You costs one small model call each time the library changes (titles, one-liners and glossary terms of up to 120 sources; a few cents), and is the one `/api/evolve` action the trial may run.
+
 **Progress streams**: with `accept: application/x-ndjson`, `/api/brief` and `/api/script` stream `{"p": characters written}` while the model writes, then `{"ok": result}` or `{"error", "code", "status"}`. Request counts are unchanged, so the Firewall rules need no change.
 
 **Spend control**, in three layers:

@@ -358,6 +358,29 @@ textarea.field { resize: vertical; min-height: 89px; line-height: 1.5; }
 .meter { height: 6px; border-radius: 99px; background: var(--fill); overflow: hidden; }
 .meter > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
 
+/* ---------------------------------------------------------------- research atlas
+   Always deep space, in light and dark: the one dark surface in the app, so the stars can glow. */
+.atlas { position: relative; width: 100%; aspect-ratio: 1; border-radius: var(--r3); overflow: hidden; background: #03040b; box-shadow: var(--shadow-2), 0 0 0 0.5px rgba(255, 255, 255, .06) inset; }
+.atlas svg { display: block; width: 100%; height: 100%; }
+.atlas-hit { cursor: pointer; }
+.atlas-tw { animation: twinkle 6s ease-in-out infinite; }
+@keyframes twinkle { 0%, 100% { opacity: .15; } 50% { opacity: .7; } }
+.atlas-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s3); padding-top: var(--s2); border-top: 0.5px solid var(--separator); }
+.atlas-stat { font-size: var(--t1); font-weight: 650; letter-spacing: -0.02em; }
+.atlas-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.atlas-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; font-size: 13px; font-weight: 550; border: 0; font-family: inherit; color: var(--label); background: color-mix(in srgb, var(--c) 18%, transparent); cursor: default; }
+button.atlas-chip { cursor: pointer; }
+.atlas-chip::before { content: ""; width: 6px; height: 6px; border-radius: 99px; background: var(--c); }
+.atlas-next { display: flex; align-items: center; gap: var(--s3); width: 100%; border: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.atlas-dot { width: 12px; height: 12px; flex: none; border-radius: 99px; border: 1.5px dashed var(--c); }
+.atlas-badges { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s2); }
+.atlas-badge { display: grid; justify-items: center; align-content: start; gap: 4px; padding: var(--s3) 6px; border-radius: var(--r2); background: var(--bg-elevated); box-shadow: var(--shadow-1); text-align: center; color: var(--label-4); }
+.atlas-badge.got { color: var(--label); }
+.atlas-badge-name { font-size: 13px; font-weight: 600; }
+.atlas-badge-hint { font-size: 11px; line-height: 1.35; color: var(--label-3); }
+.atlas-row { border: 0; background: transparent; padding: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; min-width: 0; display: block; width: 100%; }
+@media (max-width: 640px) { .atlas-badges { grid-template-columns: repeat(2, 1fr); } .atlas-stats { grid-template-columns: repeat(2, 1fr); } }
+
 /* ---------------------------------------------------------------- misc */
 .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 550; background: var(--fill); color: var(--label-2); white-space: nowrap; }
 .badge.good { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }

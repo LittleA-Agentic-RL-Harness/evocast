@@ -15,6 +15,7 @@ import { canAutoTune, DEFAULT_TUNE_BUDGET, spentThisWeek } from "@/lib/harness/a
 import { getActive, getEvolutionLog, getTuneSpend, listHarnesses, saveProfile, setActive, type ActiveSet, type EvolutionLogEntry, type HarnessRecord } from "@/lib/client/store";
 import { downloadBlob, effectiveTtsModel } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
+import { ResearchAtlas } from "./Atlas";
 
 // ------------------------------------------------------------------ jigsaw geometry
 
@@ -134,8 +135,10 @@ export default function You() {
     <div className="column stack-lg">
       <div className="stack" style={{ gap: 6 }}>
         <h1 className="title">{T("你", "You")}</h1>
-        <p className="lede">{T("每一期、每一次点选，都会拼上一块。这张拼图只存在你的设备里。", "Every episode and every tap adds a piece. This puzzle lives only on your device.")}</p>
+        <p className="lede">{T("每一期、每一次点选，都会让它更懂你。这些只存在你的设备里。", "Every episode and every tap teaches it more about you. All of it lives only on your device.")}</p>
       </div>
+
+      <ResearchAtlas />
 
       <div className="card stack-lg" style={{ padding: "34px 21px" }}>
         <Puzzle pieces={pieces} lang={lang} />

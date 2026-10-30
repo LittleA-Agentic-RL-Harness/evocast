@@ -31,7 +31,7 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 
 1. **One source, many listeners.** The same paper becomes a different episode for a researcher, an engineer, an executive, a commerce operator or a newcomer — different depth, jargon budget, structure and takeaways, each checked by persona‑specific tests.
 2. **It improves itself — measurably.** The generation *harness* evolves with **HarnessPro** (arXiv [2610.26770](https://arxiv.org/abs/2610.26770)): fixed label‑free tests, cost/balanced/quality planners, Pareto selection → three modes, *lite · medium · heavy*. A second harness evolves the **interface** itself.
-3. **It gets to know you.** What's pre‑filled, what's shown, which shortcuts appear — all learned from your choices, replay‑evaluated for free, auto‑reverted if they get worse. Your portrait fills in like a puzzle. It never leaves your device.
+3. **It gets to know you.** What's pre‑filled, what's shown, which shortcuts appear — all learned from your choices, replay‑evaluated for free, auto‑reverted if they get worse. The papers you read become a map of your research universe, and your portrait fills in like a puzzle. It never leaves your device.
 
 | | Evocast | NotebookLM Audio | ElevenLabs GenFM | Podcastfy / open‑notebook |
 |---|:-:|:-:|:-:|:-:|
@@ -59,7 +59,7 @@ Most "paper‑to‑podcast" tools give everyone the same 20‑minute chat. Evoca
 <tr>
 <td><b>Now Playing — transcript synced line by line</b><br/>
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/player-dark.png"><img src="docs/assets/player-light.png" alt="Now Playing" /></picture></td>
-<td><b>You — a portrait that fills in as you listen</b><br/>
+<td><b>You — your research universe and a portrait that fills in as you listen</b><br/>
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/you-dark.png"><img src="docs/assets/you-light.png" alt="Portrait puzzle" /></picture></td>
 </tr>
 <tr>

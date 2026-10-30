@@ -26,6 +26,7 @@ import { buildTestSuite, checkRules, passRate } from "../harness/tests";
 import { splitForNotes } from "../ingest/clean";
 import { UIPatchSchema, type UIGenome, type UIPatch } from "../harness/ui";
 import { uiPlannerSystem, uiPlannerUser } from "../harness/prefill";
+import { atlasSystem, atlasUser, AtlasWireSchema, type AtlasEntry, type AtlasWire } from "../harness/atlas";
 
 /** Direct-read budget per provider (characters). Longer documents go through map-reduce notes first. */
 function directBudget(cfg: LLMConfig): number {
@@ -274,6 +275,21 @@ async function gradeLines(cfg: LLMConfig, h: Harness, brief: Brief, lines: Scrip
 export async function gradeEpisode(cfg: LLMConfig, h: Harness, brief: Brief, docTests: TestCase[], script: Script, req: EpisodeRequest) {
   const graded = await gradeScript(cfg, h, brief, docTests, script, req);
   return { results: graded.results, passRate: graded.results.length ? passRate(graded.results) : null, usage: graded.usage };
+}
+
+// ------------------------------------------------------------------ the research atlas
+
+/** Name the fields and concepts of everything this person has made episodes from (one cheap call). */
+export async function mapAtlas(cfg: LLMConfig, entries: AtlasEntry[], uiLang: "zh" | "en"): Promise<{ atlas: AtlasWire; usage: Usage }> {
+  const r = await callJSON(cfg, {
+    system: atlasSystem(),
+    user: atlasUser(entries.slice(-120), uiLang),
+    schema: AtlasWireSchema,
+    effort: "low",
+    maxTokens: 12000,
+    mock: () => ({ identity: "", summary: "", fields: [], papers: [], bridges: [], next: { field: "", domain: "ai" as const, why: "" } }),
+  });
+  return { atlas: r.data, usage: r.usage };
 }
 
 // ------------------------------------------------------------------ evolution agents

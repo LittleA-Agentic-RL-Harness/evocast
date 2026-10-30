@@ -1,5 +1,6 @@
 import { HarnessSchema } from "@/lib/harness/genome";
-import { analyze, makeBrief, plan, planInterface, runScriptStage } from "@/lib/server/pipeline";
+import { analyze, makeBrief, mapAtlas, plan, planInterface, runScriptStage } from "@/lib/server/pipeline";
+import type { AtlasEntry } from "@/lib/harness/atlas";
 import { UIGenomeSchema } from "@/lib/harness/ui";
 import { errorResponse, isTrial, resolveLLM } from "@/lib/server/keys";
 import { LLMError } from "@/lib/llm/error";
@@ -10,6 +11,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 type Body =
+  | { action: "atlas"; entries: AtlasEntry[]; uiLang: "zh" | "en" }
   | { action: "analyze"; harness: unknown; traces: EpisodeTrace[]; uiLang?: "zh" | "en" }
   | { action: "ui-plan"; ui: unknown; stats: string; portrait: string; sessions: string; uiLang: "zh" | "en" }
   | {
@@ -30,13 +32,16 @@ type Body =
 /**
  * HarnessPro-style evolution steps, orchestrated by the browser one call at a time
  * (each fits one function call): analyze → plan ×3 priorities → evaluate candidates.
+ * Also draws the research atlas on You (the only action the free trial may run).
  */
 export async function POST(req: Request) {
   try {
-    // An epoch costs more than a day's trial allowance: evolution runs on the listener's own keys only.
-    if (isTrial(req)) throw Object.assign(new LLMError("Self-tuning runs on your own keys, not the free trial.", 403), { code: "trial_evolve" });
     const body = (await req.json()) as Body;
+    // An epoch costs more than a day's trial allowance: evolution runs on the listener's own keys only.
+    // Drawing the research atlas is one small call, so the trial may make it.
+    if (isTrial(req) && body.action !== "atlas") throw Object.assign(new LLMError("Self-tuning runs on your own keys, not the free trial.", 403), { code: "trial_evolve" });
     const cfg = resolveLLM(req);
+    if (body.action === "atlas") return Response.json(await mapAtlas(cfg, (body.entries ?? []).slice(-120), body.uiLang === "en" ? "en" : "zh"));
     if (body.action === "ui-plan") {
       return Response.json(await planInterface(cfg, UIGenomeSchema.parse(body.ui), body.stats, body.portrait, body.sessions, body.uiLang));
     }
