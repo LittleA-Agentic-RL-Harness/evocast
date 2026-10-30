@@ -55,6 +55,7 @@ export async function listEpisodes(): Promise<Episode[]> {
   return all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 export const saveEpisode = (e: Episode) => idb.put("episodes", e.id, e);
+export const getEpisode = (id: string) => idb.get<Episode>("episodes", id);
 export const getAudio = (id: string) => idb.get<Blob>("audio", id);
 export const saveAudio = (id: string, blob: Blob) => idb.put("audio", id, blob);
 export const saveSource = (id: string, src: { name: string; text: string }) => idb.put("sources", id, src);

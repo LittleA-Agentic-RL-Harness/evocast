@@ -1,5 +1,5 @@
 import { ElevenError, fillStarts, textToDialogueTimed, textToSpeechLinesTimed } from "@/lib/tts/elevenlabs";
-import { gatewaySpeechTimed } from "@/lib/tts/gateway";
+import { gatewaySpeechPrice, gatewaySpeechTimed } from "@/lib/tts/gateway";
 import { modelInfo } from "@/lib/tts/models";
 import { silentMp3 } from "@/lib/tts/mp3";
 import { ttsUsd } from "@/lib/harness/cost";
@@ -27,7 +27,8 @@ export async function POST(req: Request) {
       const { apiKey, meter } = resolveTrialSpeech(req);
       await meter.admit();
       out = await gatewaySpeechTimed(apiKey, inputs, body.model, body.lang, body.context).catch((e) => Promise.reject(meter.translate(e)));
-      await meter.record("tts", ttsUsd(body.model, chars, 1, true), chars);
+      const live = info.gateway ? await gatewaySpeechPrice(info.gateway) : undefined;
+      await meter.record("tts", live?.perChar != null ? chars * live.perChar : ttsUsd(body.model, chars), chars);
     } else {
       const key = resolveElevenKey(req);
       if (!key && req.headers.get("x-llm-provider") === "mock") {

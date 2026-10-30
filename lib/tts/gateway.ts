@@ -74,8 +74,32 @@ export async function gatewaySpeechTimed(token: string, inputs: DialogueInput[],
   return { audio, starts };
 }
 
-export const GATEWAY_MUSIC_USD_PER_S = 0.00125;
+/** Twice Eleven Music's launch price on the Gateway: what the trial meter counts when live prices can't be read. */
+export const GATEWAY_MUSIC_USD_PER_S = 0.0025;
+
+const PRICES_MS = 6 * 3600_000;
+let prices: { at: number; byId: Record<string, { perChar?: number; perSecond?: number }> } | null = null;
+
+/**
+ * Live Gateway list prices for speech models (cached six hours), so the trial meter counts what
+ * the Gateway actually charges; launch discounts end. Undefined when the catalog can't be read:
+ * callers then count the full ElevenLabs list price, never less.
+ */
+export async function gatewaySpeechPrice(id: string): Promise<{ perChar?: number; perSecond?: number } | undefined> {
+  if (!prices || Date.now() - prices.at > PRICES_MS) {
+    try {
+      const res = await fetch(`${GATEWAY_URL}/v1/models`, { signal: AbortSignal.timeout(4_000) });
+      const j = (await res.json()) as { data: { id: string; pricing?: { speech_input_character_cost?: string; speech_output_cost_per_second?: string } }[] };
+      const num = (v?: string) => (v != null && Number(v) > 0 ? Number(v) : undefined);
+      prices = { at: Date.now(), byId: Object.fromEntries(j.data.map((m) => [m.id, { perChar: num(m.pricing?.speech_input_character_cost), perSecond: num(m.pricing?.speech_output_cost_per_second) }])) };
+    } catch {
+      return prices?.byId[id];
+    }
+  }
+  return prices.byId[id];
+}
 
 export function gatewayMusic(token: string, prompt: string, ms = 7000): Promise<Uint8Array> {
-  return speech(token, "elevenlabs/music-v2.5", { text: prompt, providerOptions: { elevenlabs: { musicLengthMs: ms } } });
+  // Instrumental like the direct path, and at the voices' sample rate so the sting can be stitched in front.
+  return speech(token, "elevenlabs/music-v2.5", { text: prompt, providerOptions: { elevenlabs: { musicLengthMs: ms, forceInstrumental: true, outputFormat: "mp3_44100_128" } } });
 }

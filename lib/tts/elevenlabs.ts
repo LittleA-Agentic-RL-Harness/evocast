@@ -64,23 +64,29 @@ export async function textToDialogue(key: string, inputs: DialogueInput[], model
 }
 
 /** Per-line TTS with neighbouring text as context, stitched into one MP3 chunk. */
+/** Line i on its own, with its neighbours as context so delivery flows across lines. */
+async function speakLine(key: string, inputs: DialogueInput[], i: number, model: string, lang: Lang): Promise<Uint8Array | null> {
+  const text = prepText(inputs[i].text, model);
+  if (!text) return null;
+  const res = await el(key, `/v1/text-to-speech/${encodeURIComponent(inputs[i].voice_id)}?output_format=${OUTPUT_FORMAT}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "audio/mpeg" },
+    body: JSON.stringify({
+      text,
+      model_id: model,
+      ...(modelInfo(model)?.languageCode ? { language_code: lang } : {}),
+      previous_text: i > 0 ? stripTags(inputs[i - 1].text).slice(-300) : undefined,
+      next_text: i < inputs.length - 1 ? stripTags(inputs[i + 1].text).slice(0, 300) : undefined,
+    }),
+  });
+  return stripMp3Headers(new Uint8Array(await res.arrayBuffer()));
+}
+
 export async function textToSpeechLines(key: string, inputs: DialogueInput[], model: string, lang: Lang): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
   for (let i = 0; i < inputs.length; i++) {
-    const text = prepText(inputs[i].text, model);
-    if (!text) continue;
-    const res = await el(key, `/v1/text-to-speech/${encodeURIComponent(inputs[i].voice_id)}?output_format=${OUTPUT_FORMAT}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "audio/mpeg" },
-      body: JSON.stringify({
-        text,
-        model_id: model,
-        ...(modelInfo(model)?.languageCode ? { language_code: lang } : {}),
-        previous_text: i > 0 ? stripTags(inputs[i - 1].text).slice(-300) : undefined,
-        next_text: i < inputs.length - 1 ? stripTags(inputs[i + 1].text).slice(0, 300) : undefined,
-      }),
-    });
-    parts.push(stripMp3Headers(new Uint8Array(await res.arrayBuffer())));
+    const one = await speakLine(key, inputs, i, model, lang);
+    if (one) parts.push(one);
   }
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let o = 0;
@@ -202,8 +208,9 @@ export async function inspectAccount(key: string): Promise<ElevenAccount> {
       return null;
     }
   };
-  const [user, models] = await Promise.all([read<ElevenUser>("/v1/user"), read<{ model_id: string; can_do_text_to_speech?: boolean }[]>("/v1/models")]);
-  const tts = models ? models.filter((m) => m.can_do_text_to_speech !== false).map((m) => m.model_id) : [...TTS_MODELS];
+  const [user, models] = await Promise.all([read<ElevenUser>("/v1/user"), read<{ model_id: string; can_do_text_to_speech?: boolean; requires_alpha_access?: boolean }[]>("/v1/models")]);
+  // Alpha models need special access: never auto-pick one.
+  const tts = models ? models.filter((m) => m.can_do_text_to_speech !== false && !m.requires_alpha_access).map((m) => m.model_id) : [...TTS_MODELS];
   const tier = user?.subscription?.tier ?? null;
   return {
     tier,
@@ -272,7 +279,7 @@ export async function textToSpeechLinesTimed(key: string, inputs: DialogueInput[
   let t = 0;
   for (let i = 0; i < inputs.length; i++) {
     starts.push(t);
-    const one = await textToSpeechLines(key, [inputs[i]], model, lang);
+    const one = (await speakLine(key, inputs, i, model, lang)) ?? new Uint8Array();
     parts.push(one);
     t += mp3Duration(one);
   }

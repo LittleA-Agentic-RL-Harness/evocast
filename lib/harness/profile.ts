@@ -41,7 +41,8 @@ export const FEEDBACK_CHIPS: Chip[] = [
 export function applyChip(profile: ListenerProfile, chipId: string, persona: PersonaId): ListenerProfile {
   const chip = FEEDBACK_CHIPS.find((c) => c.id === chipId);
   if (!chip) return profile;
-  const next: ListenerProfile = { notes: [...profile.notes], minutesBias: { ...profile.minutesBias } };
+  // Keep everything else the profile carries (portrait summary, name).
+  const next: ListenerProfile = { ...profile, notes: [...profile.notes], minutesBias: { ...profile.minutesBias } };
   if (chip.note) {
     const scoped = `[${persona}] ${chip.note}`;
     if (!next.notes.includes(scoped)) next.notes.push(scoped);

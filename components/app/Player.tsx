@@ -4,7 +4,8 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "./context";
 import Artwork from "../ui/Artwork";
-import { MenuItem, Popover, Segmented, Sheet, spring } from "../ui/kit";
+import { MenuItem, Popover, Segmented, Sheet, fade } from "../ui/kit";
+import { lineStarts } from "@/lib/format";
 import { Back15, Fwd30, More, Pause, Play, ThumbDown, ThumbUp, Xmark } from "../ui/icons";
 import { fmt } from "./Listen";
 import type { Episode, Feedback } from "@/lib/types";
@@ -12,24 +13,12 @@ import { PERSONAS } from "@/lib/harness/personas";
 import { STYLES } from "@/lib/harness/styles";
 import { FEEDBACK_CHIPS, applyChip } from "@/lib/harness/profile";
 import { buildTestSuite, RULE_TESTS } from "@/lib/harness/tests";
-import { SEEDS } from "@/lib/harness/genome";
 import { stripTags } from "@/lib/tts/tags";
-import { deleteEpisode, getAudio, getHarness, getProfile, saveEpisode, saveProfile } from "@/lib/client/store";
+import { deleteEpisode, getAudio, getEpisode, getProfile, saveEpisode, saveProfile } from "@/lib/client/store";
 import { downloadBlob, slug, transcriptMarkdown } from "@/lib/client/pipeline";
 import { track } from "@/lib/client/track";
 
-/** Start time of every line: exact (from ElevenLabs timestamps) when stored, else proportional to text length. */
-export function lineStarts(e: Episode, duration: number): number[] {
-  if (e.timings && e.timings.length === e.script.lines.length) return e.timings;
-  const lens = e.script.lines.map((l) => Math.max(1, stripTags(l.text).length));
-  const total = lens.reduce((a, b) => a + b, 0);
-  let acc = 0;
-  return lens.map((n) => {
-    const t = (acc / total) * duration;
-    acc += n;
-    return t;
-  });
-}
+const RATES = [1, 1.25, 1.5, 2];
 
 export function MiniPlayer() {
   const { player, toggle, setSheet, T, lang } = useApp();
@@ -37,18 +26,20 @@ export function MiniPlayer() {
   return (
     <AnimatePresence>
       {e && !player.sheet && (
-        <motion.div className="mini" data-private initial={{ y: 89, x: "-50%", opacity: 0 }} animate={{ y: 0, x: "-50%", opacity: 1 }} exit={{ y: 89, x: "-50%", opacity: 0 }} transition={spring}>
+        <motion.div className="mini" data-private initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={fade} style={{ translate: "-50% 0" }}>
           <span className="mini-progress" style={{ width: `${player.duration ? (player.time / player.duration) * 100 : 0}%` }} />
-          <button className="mini-art" onClick={() => setSheet(true)} aria-label={T("展开播放器", "Open player")} style={{ border: 0, padding: 0 }}>
-            <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
-          </button>
-          <button className="grow" onClick={() => setSheet(true)} style={{ border: 0, background: "none", textAlign: "left", cursor: "pointer", padding: 0, minWidth: 0 }}>
-            <div className="ellipsis" style={{ fontWeight: 600, fontSize: 14 }}>
-              {e.title}
-            </div>
-            <div className="caption tabular">
-              {fmt(player.time)} / {fmt(player.duration || e.durationSec)}
-            </div>
+          <button className="grow row" onClick={() => setSheet(true)} aria-label={T("展开播放器", "Open player")} style={{ border: 0, background: "none", textAlign: "left", cursor: "pointer", padding: 0, minWidth: 0, flexWrap: "nowrap", gap: 11 }}>
+            <span className="mini-art">
+              <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
+            </span>
+            <span className="grow" style={{ minWidth: 0 }}>
+              <span className="ellipsis" style={{ display: "block", fontWeight: 600, fontSize: 14 }}>
+                {e.title}
+              </span>
+              <span className="caption tabular">
+                {fmt(player.time)} / {fmt(player.duration || e.durationSec)}
+              </span>
+            </span>
           </button>
           <button className="icon-btn" onClick={toggle} aria-label={player.playing ? T("暂停", "Pause") : T("播放", "Play")} style={{ color: "var(--label)" }}>
             {player.playing ? <Pause size={20} /> : <Play size={20} />}
@@ -116,9 +107,7 @@ export function NowPlaying() {
   useEffect(() => {
     if (!e) return;
     setFb(e.feedback ?? { rating: 0, tags: [], note: "", listenedPct: 0, replays: 0, updatedAt: "" });
-    getHarness(e.harnessId)
-      .catch(() => SEEDS.medium)
-      .then((h) => setChecks(new Map([...buildTestSuite(e.tests, e, h), ...RULE_TESTS].map((t) => [t.id, t.check]))));
+    setChecks(new Map([...buildTestSuite(e.tests, e), ...RULE_TESTS].map((t) => [t.id, t.check])));
   }, [e?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const starts = useMemo(() => (e ? lineStarts(e, player.duration || e.durationSec) : []), [e, player.duration]);
@@ -135,10 +124,13 @@ export function NowPlaying() {
 
   if (!e || !fb) return <Sheet open={false} onClose={() => setSheet(false)} label="player"><div /></Sheet>;
 
+  /** Rating, chips and note only: merged into the stored feedback so listening data written meanwhile survives. */
   async function persist(next: Feedback, chip?: string) {
     if (!e) return;
     setFb(next);
-    await saveEpisode({ ...e, feedback: { ...next, listenedPct: Math.max(next.listenedPct, e.feedback?.listenedPct ?? 0), updatedAt: new Date().toISOString() } });
+    const cur = (await getEpisode(e.id)) ?? e;
+    const base = cur.feedback ?? next;
+    await saveEpisode({ ...cur, feedback: { ...base, rating: next.rating, tags: next.tags, note: next.note, updatedAt: new Date().toISOString() } });
     if (chip) await saveProfile(applyChip(await getProfile(), chip, e.persona));
     await refresh();
   }
@@ -149,8 +141,7 @@ export function NowPlaying() {
   return (
     <Sheet open={player.sheet} onClose={() => setSheet(false)} label={T("正在播放", "Now playing")}>
       <div className="sheet-body" data-private>
-        <div className="spread" style={{ marginBottom: 13 }}>
-          <span className="eyebrow">{T("正在播放", "Now playing")}</span>
+        <div className="row" style={{ justifyContent: "flex-end", marginBottom: 8 }}>
           <div className="row">
             <Popover
               align="end"
@@ -177,13 +168,13 @@ export function NowPlaying() {
 
         <div className="np">
           <div className="stack-lg">
-            <motion.div className="np-art" animate={{ scale: player.playing ? 1 : 0.94 }} transition={{ type: "spring", stiffness: 260, damping: 22 }}>
+            <div className="np-art">
               <Artwork title={e.title} style={e.style} eyebrow={PERSONAS[e.persona].label[lang]} seed={e.id} />
-            </motion.div>
+            </div>
             <div className="stack" style={{ gap: 4 }}>
               <h2 className="headline">{e.title}</h2>
               <span className="caption ellipsis">
-                {e.sourceName} · {PERSONAS[e.persona].label[lang]} · {STYLES[e.style].label[lang]}
+                {PERSONAS[e.persona].label[lang]} · {STYLES[e.style].label[lang]}
               </span>
             </div>
             <Scrubber />
@@ -191,15 +182,17 @@ export function NowPlaying() {
               <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => seek(player.time - 15)} aria-label="-15s">
                 <Back15 size={26} />
               </button>
-              <motion.button className="play-big" whileTap={{ scale: 0.92 }} transition={spring} onClick={toggle} aria-label={player.playing ? T("暂停", "Pause") : T("播放", "Play")}>
+              <button className="play-big" onClick={toggle} aria-label={player.playing ? T("暂停", "Pause") : T("播放", "Play")}>
                 {player.playing ? <Pause size={28} /> : <Play size={28} style={{ marginLeft: 3 }} />}
-              </motion.button>
+              </button>
               <button className="icon-btn" style={{ width: 44, height: 44, color: "var(--label)" }} onClick={() => seek(player.time + 30)} aria-label="+30s">
                 <Fwd30 size={26} />
               </button>
             </div>
             <div className="row" style={{ justifyContent: "center" }}>
-              <Segmented value={player.rate} onChange={setRate} label="speed" options={[1, 1.25, 1.5, 2].map((r) => ({ value: r, label: `${r}×` }))} />
+              <button className="btn small" onClick={() => setRate(RATES[(RATES.indexOf(player.rate) + 1) % RATES.length])} aria-label={T("播放速度", "Playback speed")}>
+                {player.rate}×
+              </button>
             </div>
 
             <div className="card flat stack" style={{ padding: 13 }}>
@@ -214,9 +207,8 @@ export function NowPlaying() {
                   </button>
                 </div>
               </div>
-              <AnimatePresence>
-                {fb.rating !== 0 && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} style={{ overflow: "hidden" }}>
+              {fb.rating !== 0 && (
+                  <div>
                     <div className="row" style={{ paddingTop: 4 }}>
                       {FEEDBACK_CHIPS.filter((c) => (fb.rating > 0 ? c.sentiment > 0 || c.id === "too-long" : c.sentiment < 0)).map((c) => {
                         const on = fb.tags.includes(c.id);
@@ -228,9 +220,8 @@ export function NowPlaying() {
                       })}
                     </div>
                     <input className="field" style={{ marginTop: 8 }} placeholder={T("一句话告诉它（可选）", "Tell it in a sentence (optional)")} defaultValue={fb.note} onBlur={(ev) => ev.target.value !== fb.note && persist({ ...fb, note: ev.target.value })} />
-                  </motion.div>
+                  </div>
                 )}
-              </AnimatePresence>
             </div>
           </div>
 
@@ -240,9 +231,9 @@ export function NowPlaying() {
               onChange={setTab}
               label="tabs"
               options={[
-                { value: "transcript", label: T("文字稿", "Transcript") },
-                { value: "notes", label: T("要点", "Takeaways") },
-                { value: "checks", label: e.results.length ? `${T("校验", "Checks")} ${passed}/${e.results.length}` : T("校验", "Checks") },
+                { value: "transcript" as const, label: T("文字稿", "Transcript") },
+                { value: "notes" as const, label: T("要点", "Takeaways") },
+                ...(e.results.length ? [{ value: "checks" as const, label: `${T("校验", "Checks")} ${passed}/${e.results.length}` }] : []),
               ]}
             />
             {tab === "transcript" && (
@@ -272,8 +263,8 @@ export function NowPlaying() {
                 ))}
               </div>
             )}
-            {tab === "checks" &&
-              (e.results.length ? (
+            {tab === "checks" && e.results.length > 0 && (
+              <>
                 <div className="list">
                   {e.results.map((r) => (
                     <div key={r.id} className="list-row" style={{ alignItems: "flex-start" }}>
@@ -286,12 +277,11 @@ export function NowPlaying() {
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="hint">{T("轻快档没有运行校验，以节省成本。", "Lite mode skips verification to save cost.")}</p>
-              ))}
-            <p className="caption" style={{ marginTop: 8 }}>
-              Harness <span className="mono">{e.harnessId}</span> · {e.ttsModel} · ${(e.metrics.llmUsd + e.metrics.ttsUsd).toFixed(3)}
-            </p>
+                <p className="caption" style={{ marginTop: 8 }}>
+                  Harness <span className="mono">{e.harnessId}</span> · {e.ttsModel} · ${(e.metrics.llmUsd + e.metrics.ttsUsd).toFixed(3)}
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>

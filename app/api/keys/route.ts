@@ -24,7 +24,8 @@ export async function POST(req: Request) {
       return Response.json({ ok: true, account: await inspectAccount(key) });
     } catch (e) {
       const status = e instanceof ElevenError ? e.status : 502;
-      return Response.json({ ok: false, error: (e as Error).message }, { status });
+      const errorZh = e instanceof ElevenError && e.code === "invalid_api_key" ? "钥匙无效，检查一下是否复制完整。" : undefined;
+      return Response.json({ ok: false, error: (e as Error).message, errorZh }, { status });
     }
   }
 
@@ -47,7 +48,7 @@ export async function POST(req: Request) {
     });
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) return Response.json({ ok: false, error: "Anthropic rejected the key." }, { status: 401 });
-    if (e instanceof KeyRejected) return Response.json({ ok: false, error: e.message }, { status: e.status === 401 || e.status === 403 ? 401 : 502 });
+    if (e instanceof KeyRejected) return Response.json({ ok: false, error: e.message, errorZh: e.zh }, { status: e.status === 401 || e.status === 403 ? 401 : 502 });
     return Response.json({ ok: false, error: (e as Error).message }, { status: 502 });
   }
 }
@@ -56,6 +57,7 @@ class KeyRejected extends Error {
   constructor(
     message: string,
     public status: number,
+    public zh: string,
   ) {
     super(message);
   }
@@ -86,7 +88,7 @@ async function listModels(p: Provider, key: string): Promise<{ baseUrl?: string;
       const models = (Array.isArray(j) ? j : (j.data ?? j.models ?? [])).map((m) => ({ id: m.id.replace(/^models\//, ""), created: m.created }));
       return { baseUrl: raw, models };
     }
-    last = new KeyRejected(`${p.name} rejected the key (HTTP ${res.status}).`, res.status);
+    last = new KeyRejected(`${p.name} rejected the key (HTTP ${res.status}).`, res.status, `${p.name} 不认这把钥匙（HTTP ${res.status}）。`);
   }
-  throw last ?? new KeyRejected(`${p.name} didn't answer.`, 502);
+  throw last ?? new KeyRejected(`${p.name} didn't answer.`, 502, `${p.name} 没有响应。`);
 }
