@@ -41,7 +41,8 @@ test("a dropped PDF plays within seconds, arrives chapter by chapter, takes a qu
   await player.getByRole("button", { name: "Ask", exact: true }).click();
   const ask = player.locator("[data-ask]");
   await expect(ask).toContainText("Why can it train in parallel?");
-  await expect(ask.locator(".t-line")).toHaveCount(2);
+  // The question, then the answer's lines as each starts playing (the demo's silent clips can end at once).
+  await expect(ask.locator(".t-line").nth(1)).toBeVisible();
 
   // Close the player: the episode is in the library, and the research map shows it.
   await player.getByRole("button", { name: "Close" }).click();

@@ -77,7 +77,7 @@ for (const lang of ["zh", "en"] as const) {
         await look("player-typing");
         await player.locator(".ask-input").fill(lang === "zh" ? "为什么能并行训练？" : "Why can it train in parallel?");
         await player.locator(".ask-input").press("Enter");
-        await expect(player.locator("[data-ask] .t-line")).toHaveCount(2, { timeout: 20_000 });
+        await expect(player.locator("[data-ask] .t-line").nth(1)).toBeVisible({ timeout: 20_000 });
         await look("player-answer");
 
         await expect(player.locator(".chapters li, .np-title .caption").first()).toBeVisible();
