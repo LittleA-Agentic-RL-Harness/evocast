@@ -1,7 +1,8 @@
 import { HarnessSchema } from "@/lib/harness/genome";
 import { analyze, makeBrief, plan, planInterface, runScriptStage } from "@/lib/server/pipeline";
 import { UIGenomeSchema } from "@/lib/harness/ui";
-import { errorResponse, resolveLLM } from "@/lib/server/keys";
+import { errorResponse, isTrial, resolveLLM } from "@/lib/server/keys";
+import { LLMError } from "@/lib/llm/error";
 import type { EpisodeTrace, PlannerPriority } from "@/lib/harness/prompts";
 import type { Brief, EpisodeRequest, TestCase } from "@/lib/types";
 
@@ -32,6 +33,8 @@ type Body =
  */
 export async function POST(req: Request) {
   try {
+    // An epoch costs more than a day's trial allowance: evolution runs on the listener's own keys only.
+    if (isTrial(req)) throw Object.assign(new LLMError("Self-tuning runs on your own keys, not the free trial.", 403), { code: "trial_evolve" });
     const body = (await req.json()) as Body;
     const cfg = resolveLLM(req);
     if (body.action === "ui-plan") {

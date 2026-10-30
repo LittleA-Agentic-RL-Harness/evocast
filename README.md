@@ -99,9 +99,9 @@ flowchart LR
   E -. better prefill & UI .-> P
 ```
 
-- **Content harness** — trajectory analyzer → planners (cost / balanced / quality) → whitelisted, schema‑checked edits → evaluation on a fixed validation set with fixed tests → drop below‑floor and Pareto‑dominated versions → pick *lite / medium / heavy* with HarnessPro's weighted squared distance (α,β = 1:2 · 1:1 · 2:1).
+- **Content harness** — trajectory analyzer → planners (cost / balanced / quality) → whitelisted, schema‑checked edits → evaluation on a fixed validation set with fixed tests → drop below‑floor and Pareto‑dominated versions → pick *lite / medium / heavy* with HarnessPro's weighted squared distance (α,β = 1:2 · 1:1 · 2:1). With your own keys it also **gets better with use on its own**: after 5 new episodes (or 2 thumbs‑down / early deletions) it runs one small background step for *medium* while you listen, under a weekly budget ($1 by default, set in *You*), and switches only on a clear win over a fresh re‑measurement of the current version. A live guard then compares the next 3 episodes with the previous version's last 3 (seconds actually heard, rating, deletions, rule tests, delivered vs requested length) and reverts if they land worse. Home says what changed in one line, with *Undo*. Never on the free trial.
 - **Interface harness** — every Create logs *what we pre‑filled vs what you chose*. Replaying history scores any prefill policy for free; knobs self‑tune; a planner rewrites prefill rules, shortcuts, disclosure and tone; a live guard reverts any change whose hit rate drops.
-- **Progressive disclosure** — first launch shows a greeting and a drop zone. *Listen*, *You*, fine‑tuning and the evolution engine appear as you use the app (or toggle "Show everything").
+- **Progressive disclosure** — first launch shows a greeting and a drop zone. *Listen*, *You* and fine‑tuning appear as you use the app; the evolution engine's controls stay behind "Show everything".
 
 Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design notes and research: [docs/RESEARCH.md](docs/RESEARCH.md)
 

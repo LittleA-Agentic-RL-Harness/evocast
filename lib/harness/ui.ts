@@ -216,6 +216,19 @@ export function replayHitRate(g: UIGenome, sessions: Session[], fallback: Recipe
   return prefillHitRate(replayed);
 }
 
+/** At or above this, habit alone pre-fills well enough that the content-aware model call is skipped. */
+export const HABIT_CONFIDENT = 0.95;
+
+/**
+ * How well habit alone predicts this person: the replayed hit rate of a habit-only prefill over
+ * the last `window` sessions (each judged only on the history before it). Null until there are enough.
+ */
+export function habitConfidence(sessions: Session[], halfLife: number, fallback: Recipe, window = 6): number | null {
+  if (sessions.length < window) return null;
+  const start = sessions.length - window;
+  return prefillHitRate(sessions.slice(start).map((s, j) => ({ prefill: habitRecipe(sessions.slice(0, start + j).map((x) => x.final), halfLife, fallback), final: s.final })));
+}
+
 /** Free self-tuning of the numeric prefill knobs by replay (a tiny grid search). */
 export function tunePrefill(g: UIGenome, sessions: Session[], fallback: Recipe): { genome: UIGenome; before: number | null; after: number | null } {
   const before = replayHitRate(g, sessions, fallback);

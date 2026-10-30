@@ -13,8 +13,13 @@ import { stripTags } from "../tts/tags";
 import { keyHeaders, postJSON } from "./api";
 import { applyUIPatch, changedFields, DEFAULT_RECIPE, prefillHitRate, RECIPE_FIELDS, replayHitRate, shouldRevert, tunePrefill, type UIGenome, type UIPatch } from "../harness/ui";
 import { buildPortrait, portraitText } from "../harness/portrait";
+import { baseline, GUARD_EPISODES, judgeContent, metricsKey, modelOf, outcomeOf, type Outcome } from "../harness/autotune";
 import {
   getActive,
+  getContentGuards,
+  getTombstones,
+  saveContentGuards,
+  saveTuneNotice,
   getEvolutionLog,
   getSessions,
   getUIGenome,
@@ -31,6 +36,7 @@ import {
   saveHarness,
   saveProfile,
   setActive,
+  type ActiveSet,
   type EvolutionLogEntry,
   type HarnessRecord,
   type Settings,
@@ -62,6 +68,9 @@ interface EvalResponse {
   passRate: number | null;
   script: { lines: { text: string }[] };
   productionUsd: number;
+  /** What the call really cost (writing + grading), and the brief under "full" scope. */
+  usage: { usd: number } | null;
+  briefUsd: number;
 }
 
 function requestOf(e: Episode): EpisodeRequest {
@@ -114,7 +123,7 @@ function listening(e: Episode, f: NonNullable<Episode["feedback"]>): string {
     .join(" ");
 }
 
-function traceOf(e: Episode, h: Harness): EpisodeTrace {
+export function traceOf(e: Episode, h: Harness): EpisodeTrace {
   const checks = new Map([...buildTestSuite(e.tests, requestOf(e)), ...RULE_TESTS].map((t) => [t.id, t.check]));
   const f = e.feedback;
   return {
@@ -137,42 +146,62 @@ function traceOf(e: Episode, h: Harness): EpisodeTrace {
   };
 }
 
-export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> {
-  const { settings, onLog, signal } = opts;
+/** Paid calls of a background run go through this; `check` throws to stop before going over budget. */
+export interface Wallet {
+  check: () => void;
+  charge: (usd: number) => Promise<void>;
+}
+
+export interface Bench {
+  val: Episode[];
+  /** Metrics cache key: scope, model, listener notes and validation episodes. */
+  sig: string;
+  records: Map<string, HarnessRecord>;
+  headers: Record<string, string>;
+  /** Pass rate and cost per episode on the validation set; `fresh` measures again instead of using the cache. */
+  measure: (h: Harness, label: string, fresh?: boolean) => Promise<{ pass: number; cost: number }>;
+}
+
+/** The fixed validation set, its tasks, and a cached measurer: shared by full epochs and background micro-epochs. */
+export async function prepareBench(o: {
+  settings: Settings;
+  episodes: Episode[];
+  valSize: number;
+  scope: "script" | "full";
+  onLog: (line: string) => void;
+  signal?: AbortSignal;
+  wallet?: Wallet;
+}): Promise<Bench> {
+  const { settings, onLog, signal, wallet } = o;
   const headers = keyHeaders(settings.keys, settings.llmPrice);
-  const episodes = await listEpisodes();
-  if (episodes.length === 0) throw new Error("Generate at least one episode first — evolution learns from real runs.");
-
   const records = new Map((await listHarnesses()).map((r) => [r.harness.id, r] as const));
-  const harnessOf = (id: string) => records.get(id)?.harness ?? SEEDS.medium;
-  const active = await getActive();
   const profile = await getProfile();
-  const log = await getEvolutionLog();
-  const epoch = log.length + 1;
-
-  const val = await validationSet(episodes, opts.valSize);
-  const sig = `${opts.scope}:${val.map((e) => e.id).join(",")}`;
-  onLog(`Epoch ${epoch}: validation set = ${val.length} episode(s): ${val.map((e) => `"${e.title}" (${e.persona}/${e.lang})`).join(", ")}`);
+  const val = await validationSet(o.episodes, o.valSize);
   const tasks = await Promise.all(
     val.map(async (e) => ({
       brief: e.brief,
       tests: e.tests,
       request: requestOf(e),
       notes: notesFor(profile, e.persona),
-      sourceText: opts.scope === "full" && e.sourceId ? (await getSource(e.sourceId))?.text : undefined,
+      sourceText: o.scope === "full" && e.sourceId ? (await getSource(e.sourceId))?.text : undefined,
     })),
   );
+  // A different model or different listener notes write different scripts: never reuse those numbers.
+  const sig = metricsKey({ scope: o.scope, model: modelOf(settings.keys), notes: tasks.map((t) => t.notes), val: val.map((e) => e.id) });
 
   const ttsFor = (h: Harness, mode?: Mode): string => (mode && settings.ttsOverride[mode]) || h.pipeline.ttsModel;
 
-  async function measure(h: Harness, label: string): Promise<{ pass: number; cost: number }> {
+  async function measure(h: Harness, label: string, fresh = false): Promise<{ pass: number; cost: number }> {
     const rec: HarnessRecord = records.get(h.id) ?? { harness: h, metrics: {} };
     const cached = rec.metrics[sig];
-    if (cached) return cached;
+    if (cached && !fresh) return cached;
     const runs = [];
     for (const task of tasks) {
       if (signal?.aborted) throw new Error("Cancelled");
-      runs.push(await postJSON<EvalResponse>("/api/evolve", { action: "evaluate", harness: h, task }, headers, signal));
+      wallet?.check();
+      const r = await postJSON<EvalResponse>("/api/evolve", { action: "evaluate", harness: h, task }, headers, signal);
+      await wallet?.charge((r.usage?.usd ?? 0) + (r.briefUsd ?? 0));
+      runs.push(r);
     }
     const pass = runs.reduce((n, r) => n + (r.passRate ?? 0), 0) / runs.length;
     const cost =
@@ -184,6 +213,24 @@ export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> 
     onLog(`  measured ${label}: pass ${(m.pass * 100).toFixed(1)}%, cost $${m.cost.toFixed(3)}/episode`);
     return m;
   }
+
+  return { val, sig, records, headers, measure };
+}
+
+export const diagnosesText = (d: Diagnosis) => d.diagnoses.map((x, i) => `${i + 1}. ${x.issue}\n   impact: ${x.impact}\n   source: ${x.source}\n   evidence: ${x.evidence}`).join("\n");
+
+export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> {
+  const { settings, onLog, signal } = opts;
+  const episodes = await listEpisodes();
+  if (episodes.length === 0) throw new Error("Generate at least one episode first — evolution learns from real runs.");
+
+  const { val, records, headers, measure } = await prepareBench({ settings, episodes, valSize: opts.valSize, scope: opts.scope, onLog, signal });
+  const harnessOf = (id: string) => records.get(id)?.harness ?? SEEDS.medium;
+  const active = await getActive();
+  const profile = await getProfile();
+  const log = await getEvolutionLog();
+  const epoch = log.length + 1;
+  onLog(`Epoch ${epoch}: validation set = ${val.length} episode(s): ${val.map((e) => `"${e.title}" (${e.persona}/${e.lang})`).join(", ")}`);
 
   // Stage 0 — parents and the performance floor. HarnessPro uses PR(h0) of a single seed;
   // we start from three seeds (lite/medium/heavy), so the floor is the weakest seed's pass
@@ -203,7 +250,6 @@ export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> 
   const { diagnosis } = await postJSON<{ diagnosis: Diagnosis }>("/api/evolve", { action: "analyze", harness: harnessOf(active.medium), traces, uiLang: settings.uiLang }, headers, signal);
   onLog(`  ${diagnosis.summary}`);
   for (const d of diagnosis.diagnoses.slice(0, 6)) onLog(`  • ${d.issue} [${d.source}] — ${d.impact}`);
-  const diagnosesText = diagnosis.diagnoses.map((d, i) => `${i + 1}. ${d.issue}\n   impact: ${d.impact}\n   source: ${d.source}\n   evidence: ${d.evidence}`).join("\n");
 
   const merged = [...new Set([...profile.notes, ...diagnosis.listener_notes])].slice(-12);
   await saveProfile({ ...profile, notes: merged, summary: diagnosis.portrait_summary || profile.summary });
@@ -222,7 +268,7 @@ export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> 
       if (signal?.aborted) throw new Error("Cancelled");
       const { plan } = await postJSON<{ plan: Plan }>(
         "/api/evolve",
-        { action: "plan", priority, scope: opts.scope, harness: p, metrics: metrics.get(p.id), diagnoses: diagnosesText, peers },
+        { action: "plan", priority, scope: opts.scope, harness: p, metrics: metrics.get(p.id), diagnoses: diagnosesText(diagnosis), peers },
         headers,
         signal,
       );
@@ -254,6 +300,7 @@ export async function runEpoch(opts: EvolveOptions): Promise<EvolutionLogEntry> 
   if (!selected) throw new Error("Selection produced no harness.");
   const next = { lite: selected.lite.id, medium: selected.medium.id, heavy: selected.heavy.id };
   await setActive(next);
+  await startContentGuards(active, next);
   // Keep every candidate (even rejected ones) for the version history.
   for (const c of candidates) {
     const rec = records.get(c.id);
@@ -390,4 +437,63 @@ export async function checkInterfaceGuard(): Promise<string | null> {
   if (!parent) return null;
   await setUIGenome(parent, null);
   return `Interface change reverted: prefill hit rate dropped to ${Math.round((prefillHitRate(since) ?? 0) * 100)}% (was ${Math.round((guard.parentRate ?? 0) * 100)}%).`;
+}
+
+// ------------------------------------------------------------------ content guard (live)
+
+/** Every episode's outcome so far, deleted ones included; each is rule-checked against the harness that made it. */
+export async function allOutcomes(): Promise<Outcome[]> {
+  const [episodes, records, tombstones] = await Promise.all([listEpisodes(), listHarnesses(), getTombstones()]);
+  const byId = new Map(records.map((r) => [r.harness.id, r.harness]));
+  return [...episodes.map((e) => outcomeOf(e, byId.get(e.harnessId))), ...tombstones];
+}
+
+/** After an epoch switches a mode's harness: watch the child's next episodes against the parent's last ones. */
+export async function startContentGuards(prev: ActiveSet, next: ActiveSet) {
+  const changed = (Object.keys(next) as Mode[]).filter((m) => next[m] !== prev[m]);
+  if (!changed.length) return;
+  const all = await allOutcomes();
+  const guards = await getContentGuards();
+  const since = new Date().toISOString();
+  for (const m of changed) guards[m] = { mode: m, parentId: prev[m], childId: next[m], since, parentScore: baseline(all, prev[m], m, since) };
+  await saveContentGuards(guards);
+}
+
+/**
+ * Called whenever listening, ratings or the library change. Once a changed mode has 3 settled
+ * episodes, keep it, or put the parent back if they landed clearly worse (and say so on Home).
+ */
+export async function checkContentGuard(): Promise<boolean> {
+  const guards = await getContentGuards();
+  const modes = Object.keys(guards) as Mode[];
+  if (!modes.length) return false;
+  const active = await getActive();
+  const all = await allOutcomes();
+  let reverted = false;
+  for (const m of modes) {
+    const g = guards[m]!;
+    // Switched by hand (or undone) since: nothing left to judge.
+    if (active[m] !== g.childId) {
+      delete guards[m];
+      continue;
+    }
+    const d = judgeContent(g, all);
+    if (d.verdict === "wait") continue;
+    delete guards[m];
+    if (d.verdict === "revert") {
+      active[m] = g.parentId;
+      await setActive(active);
+      reverted = true;
+      await saveTuneNotice({
+        kind: "reverted",
+        mode: m,
+        parentId: g.parentId,
+        childId: g.childId,
+        at: new Date().toISOString(),
+        text: { en: `Undid a tune-up: your last ${GUARD_EPISODES} episodes landed worse than before.`, zh: `撤回了一次调整：最近 ${GUARD_EPISODES} 期不如之前。` },
+      });
+    }
+  }
+  await saveContentGuards(guards);
+  return reverted;
 }
