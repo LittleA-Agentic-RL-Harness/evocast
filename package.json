@@ -1,6 +1,6 @@
 {
   "name": "evocast",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "AI-native podcasts that evolve with you — turn long papers & reports into short, audience-aware two-host episodes, with a self-improving harness (HarnessPro) and an interface that learns you.",
   "scripts": {
