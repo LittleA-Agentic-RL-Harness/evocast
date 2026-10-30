@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { inspectAccount, ElevenError } from "@/lib/tts/elevenlabs";
-import { candidatesFor, providerById, PROVIDERS, type Provider } from "@/lib/llm/providers";
+import { candidatesFor, providerById, PROVIDERS, UNSUPPORTED, type Provider } from "@/lib/llm/providers";
 import { catalog } from "@/lib/llm/catalog";
 import { rankModels } from "@/lib/llm/rank";
 import { assertPublicUrl } from "@/lib/server/keys";
@@ -27,6 +27,9 @@ export async function POST(req: Request) {
       return Response.json({ ok: false, error: (e as Error).message }, { status });
     }
   }
+
+  const unusable = UNSUPPORTED.find((u) => u.match.test(key));
+  if (unusable) return Response.json({ ok: false, error: unusable.en, errorZh: unusable.zh });
 
   // The key's shape names its provider; a few `sk-…` shapes are shared, and then the visitor picks.
   const shape = candidatesFor(key);
@@ -77,8 +80,10 @@ async function listModels(p: Provider, key: string): Promise<{ baseUrl?: string;
     const check = p.verifyPath ? await get(p.verifyPath) : null;
     const res = check && !check.ok ? check : await get("/models");
     if (res.ok) {
-      const j = (await res.json()) as { data?: { id: string; created?: number }[]; models?: { id: string; created?: number }[] };
-      const models = (j.data ?? j.models ?? []).map((m) => ({ id: m.id.replace(/^models\//, ""), created: m.created }));
+      type Listed = { id: string; created?: number }[];
+      // Most answer { data: [...] }; Together answers with the bare array.
+      const j = (await res.json()) as Listed | { data?: Listed; models?: Listed };
+      const models = (Array.isArray(j) ? j : (j.data ?? j.models ?? [])).map((m) => ({ id: m.id.replace(/^models\//, ""), created: m.created }));
       return { baseUrl: raw, models };
     }
     last = new KeyRejected(`${p.name} rejected the key (HTTP ${res.status}).`, res.status);

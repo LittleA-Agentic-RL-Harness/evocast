@@ -25,6 +25,7 @@ interface LLMResult {
   /** Providers whose keys look like this one, when the shape alone can't tell. */
   candidates?: { id: string; name: string }[];
   error?: string;
+  errorZh?: string;
   provider?: { id: string; name: string; kind: "anthropic" | "openai"; baseUrl?: string; keysUrl?: string };
   models?: LLMModel[];
   recommended?: string | null;
@@ -299,8 +300,7 @@ function LLMStep({ draft, setDraft, onNext, onBack }: { draft: Settings; setDraf
         )}
         {res && !res.ok && !res.needsProvider && res.error && !checking && (
           <motion.div key="e" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="error">
-            {T("这把钥匙用不了：", "This key didn't work: ")}
-            {res.error}
+            {res.errorZh ? T(res.errorZh, res.error) : `${T("这把钥匙用不了：", "This key didn't work: ")}${res.error}`}
           </motion.div>
         )}
       </AnimatePresence>

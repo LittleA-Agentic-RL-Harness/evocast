@@ -19,7 +19,7 @@ import {
 } from "../lib/harness/ui";
 import { buildPortrait, FILLED } from "../lib/harness/portrait";
 import { EMPTY_PROFILE } from "../lib/harness/profile";
-import { candidatesFor, providerById } from "../lib/llm/providers";
+import { candidatesFor, providerById, UNSUPPORTED } from "../lib/llm/providers";
 import { modelInfo, newestDialogueModel } from "../lib/tts/models";
 import { inspectAccount } from "../lib/tts/elevenlabs";
 import { chunkScript } from "../lib/tts/chunk";
@@ -119,18 +119,32 @@ test("provider detection: unique shapes name the provider; shared sk- shapes onl
     const c = candidatesFor(k);
     return c.length === 1 ? c[0].id : c.map((p) => p.id);
   };
-  assert.equal(one("sk-ant-api03-xyz"), "anthropic");
-  assert.equal(one("sk-or-v1-abc"), "openrouter");
-  assert.equal(one("sk-proj-abc"), "openai");
-  assert.equal(one(`sk-${"A1b2".repeat(5)}T3BlbkFJ${"c3D4".repeat(5)}`), "openai");
-  assert.equal(one(`AIzaSy${"A".repeat(33)}`), "gemini");
-  assert.equal(one(`${"a".repeat(32)}.${"B".repeat(16)}`), "glm");
+  const r = (n: number, chars = "aB3") => chars.repeat(n).slice(0, n);
+  assert.equal(one(`sk-ant-api03-${r(93)}AA`), "anthropic");
+  assert.equal(one(`sk-or-v1-${"0f".repeat(32)}`), "openrouter");
+  assert.equal(one(`sk-proj-${r(74)}T3BlbkFJ${r(74)}`), "openai");
+  assert.equal(one(`sk-${r(20)}T3BlbkFJ${r(20)}`), "openai");
+  assert.equal(one(`AIzaSy${r(33)}`), "gemini");
+  assert.equal(one(`AQ.Ab8R${r(46)}`), "gemini");
+  assert.equal(one(`${"a1".repeat(16)}.${r(16)}`), "glm");
   assert.equal(one("0b6f3c2e-1a2b-4c3d-8e9f-0123456789ab"), "doubao");
-  assert.equal(one("vck_abc123"), "vercel");
-  const hex = candidatesFor("sk-0123456789abcdef0123456789abcdef").map((p) => p.id);
-  assert.deepEqual(hex.slice(0, 2), ["deepseek", "qwen"]);
-  assert.ok(hex.includes("mimo") && hex.includes("minimax"));
-  assert.ok(providerById("mimo") && providerById("minimax"));
+  assert.equal(one(`vck_${r(56)}`), "vercel");
+  assert.equal(one(r(32)), "mistral");
+  assert.equal(one(`sk-api-${r(119)}`), "minimax");
+  assert.equal(one(`sk-cp-${r(60)}`), "minimax");
+  assert.equal(one(`tp-${r(40)}`), "mimo");
+  assert.equal(one(`sk-ws${r(40)}`), "qwen");
+  assert.equal(one(`sk-sp-${r(40)}`), "qwen-plan");
+  // DeepSeek and pre-upgrade DashScope keys share a shape: ask, specific candidates first.
+  const hex = candidatesFor(`sk-${"0123456789abcdef".repeat(2)}`).map((p) => p.id);
+  assert.deepEqual(hex.slice(0, 2), ["qwen", "deepseek"]);
+  assert.ok(hex.includes("mimo") && !hex.includes("minimax"));
+  const alnum = candidatesFor(`sk-${r(48)}`).map((p) => p.id);
+  assert.equal(alnum[0], "kimi");
+  assert.ok(candidatesFor(`sk-${"q".repeat(48)}`).some((p) => p.id === "siliconflow"));
+  assert.deepEqual(candidatesFor("no-such-shape"), []);
+  for (const k of ["sk-kimi-abc", "pplx-abc", "sk-ant-admin01-abc", "sk-admin-abc"]) assert.ok(UNSUPPORTED.some((u) => u.match.test(k)), k);
+  assert.ok(providerById("mimo") && providerById("minimax") && providerById("stepfun"));
 });
 
 test("newest ElevenLabs dialogue model is adopted automatically, including future versions", () => {
