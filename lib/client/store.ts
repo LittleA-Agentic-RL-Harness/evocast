@@ -1,6 +1,6 @@
 "use client";
 
-import type { Ask, ClientKeys, Episode, Lang, Mode } from "../types";
+import type { Ask, ClientKeys, Episode, Lang, Mode, UiLang } from "../types";
 import type { Harness } from "../harness/genome";
 import { SEEDS } from "../harness/genome";
 import type { VoiceOverrides } from "../harness/styles";
@@ -134,7 +134,7 @@ export const saveEvolutionLog = (log: EvolutionLogEntry[]) => idb.put("kv", "evo
 
 export interface Settings {
   keys: ClientKeys;
-  uiLang: Lang;
+  uiLang: UiLang;
   /** Per-mode TTS model override; empty = use the harness's model. */
   ttsOverride: Partial<Record<Mode, string>>;
   ttsMultiplier: number;
@@ -258,7 +258,7 @@ export interface TuneNotice {
   mode: Mode;
   parentId: string;
   childId: string;
-  text: Record<Lang, string>;
+  text: Record<UiLang, string>;
   at: string;
 }
 export async function getTuneNotice(): Promise<TuneNotice | null> {

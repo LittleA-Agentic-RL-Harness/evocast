@@ -364,7 +364,7 @@ export function fillStarts(starts: number[], inputs: { text: string }[], duratio
 
 // ------------------------------------------------------------------ discovery, design, music
 
-export type SlotHint = { language: "zh" | "en"; style: "studio" | "idol"; speaker: "A" | "B"; model?: string; topic?: Topic };
+export type SlotHint = { language: Lang; style: "studio" | "idol"; speaker: "A" | "B"; model?: string; topic?: Topic };
 export type Topic = "paper" | "report" | "news" | "other";
 
 /**

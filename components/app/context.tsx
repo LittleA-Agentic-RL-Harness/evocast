@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Episode, Lang } from "@/lib/types";
+import type { Episode, UiLang } from "@/lib/types";
 import { visibleSurfaces, type Session, type Surface, type UIGenome } from "@/lib/harness/ui";
 import { SEED_UI } from "@/lib/harness/ui";
 import { EMPTY_PROFILE, type ListenerProfile } from "@/lib/harness/profile";
@@ -49,7 +49,7 @@ interface Ctx {
   ready: boolean;
   settings: Settings;
   update: (s: Settings) => void;
-  lang: Lang;
+  lang: UiLang;
   T: (zh: string, en: string) => string;
   view: View;
   go: (v: View) => void;

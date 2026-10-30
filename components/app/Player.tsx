@@ -8,6 +8,7 @@ import { MenuItem, Popover, Segmented, Sheet, fade } from "../ui/kit";
 import { useFigures, VisualPanel } from "./Visual";
 import { AskBar, AskBlock, HandButton, useRaiseHand } from "./Ask";
 import { chapterAt, visualAt } from "@/lib/harness/chapters";
+import { detectLang } from "@/lib/harness/langs";
 import { lineStarts } from "@/lib/format";
 import { Back15, Fwd30, More, Pause, Play, ThumbDown, ThumbUp, Xmark } from "../ui/icons";
 import { fmt } from "./Listen";
@@ -344,7 +345,7 @@ export function NowPlaying() {
                     {chapters.some((c, k) => k > 0 && c.start === i) && <div className="t-chapter">{chapters[chapterAt(chapters, i)].title}</div>}
                     <button data-i={i} className={`t-line ${i === active ? "active" : i < active ? "past" : ""}${i >= voicedLines ? " pending" : ""}`} disabled={i >= voicedLines} onClick={() => seek(starts[i] + 0.01)}>
                       <span className="t-who">{names[l.speaker]}</span>
-                      <span>{stripTags(l.text)}</span>
+                      <span dir="auto">{stripTags(l.text)}</span>
                     </button>
                     {hand.asks.map((a, k) => a.at === i && <AskBlock key={k} ask={a} names={names} live={a === hand.current} />)}
                   </div>
@@ -359,7 +360,7 @@ export function NowPlaying() {
             {tab === "notes" && (
               <div className="t-window stack">
                 {/* The brief is shared by both languages: its one-liner leads only when it's in the episode's. */}
-                {/[\u3400-\u9fff]/.test(e.brief.one_liner) === (e.lang === "zh") && <p className="headline" style={{ fontSize: 17 }}>{e.brief.one_liner}</p>}
+                {detectLang(e.brief.one_liner) === e.lang && <p className="headline" style={{ fontSize: 17 }}>{e.brief.one_liner}</p>}
                 <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }}>
                   {e.script.show_notes.map((n, i) => (
                     <li key={i}>{n}</li>

@@ -5,10 +5,11 @@ import type { ChapterOut, ColdOpen, EpisodePlan } from "../harness/schemas";
 import { chapterMinutes, placeVisuals, tail } from "../harness/chapters";
 import type { Figure } from "./figures";
 import type { Harness } from "../harness/genome";
-import { resolveVoices, STYLES, type VoiceSlot } from "../harness/styles";
+import { defaultVoice, hasNative, resolveVoices, type VoiceSlot } from "../harness/styles";
 import type { SharedVoice, VoiceInfo } from "../tts/elevenlabs";
 import { accountDefaults, freeUsable, isFreeTier, missingSeats, rankAccount, SHELF, type Seat } from "../tts/voices";
 import { notesFor } from "../harness/profile";
+import { charsPerMinute, LANG_INFO } from "../harness/langs";
 import { ttsUsd } from "../harness/cost";
 import { chunkCap, chunkScript } from "../tts/chunk";
 import { concatMp3, mp3Duration, mp3Format, stripMp3Headers } from "../tts/mp3";
@@ -71,7 +72,9 @@ const first = (name: string) => name.split(" –")[0];
 export function voiceLine(changes: VoiceChange[], T: T): string {
   return changes
     .map((c) =>
-      c.kind === "account"
+      c.kind === "picked"
+        ? T(`${LANG_INFO[c.lang].name.zh}${seatRole(c.style, c.speaker, T)}用 ElevenLabs 推荐的 ${first(c.to)}，已保存。`, `ElevenLabs' pick for the ${LANG_INFO[c.lang].name.en} ${seatRole(c.style, c.speaker, T).toLowerCase()}: ${first(c.to)} (saved).`)
+        : c.kind === "account"
         ? T(`免费套餐：主播用你账户里的 ${first(c.names[0])} × ${first(c.names[1])}。`, `Free plan: the hosts use ${first(c.names[0])} × ${first(c.names[1])} from your account.`)
         : c.saved === false
           ? T(`${first(c.from)} 在免费试用下用不了，这次由 ${first(c.to)} 担任${seatRole(c.style, c.speaker, T)}。`, `${first(c.from)} isn't available on the free trial; ${first(c.to)} spoke as ${seatRole(c.style, c.speaker, T)} this time.`)
@@ -185,6 +188,19 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
     }
     if (input.langs.some((l) => libraryOnly(request.style, l, current))) throw new ApiError("Free ElevenLabs plans can't use library voices through the API.", "free_needs_voices");
   }
+  // A language with no native voice for a seat: with a paid ElevenLabs key, ElevenLabs' top pick for it, kept.
+  if (!trial && settings.keys.elevenlabsKey && !freePlan(current)) {
+    for (const lang of input.langs)
+      for (const speaker of ["A", "B"] as Speaker[]) {
+        if (hasNative(request.style, lang, speaker) || current.voiceOverrides[request.style]?.[lang]?.[speaker]) continue;
+        const other = seatVoices(current, request.style, lang)[speaker === "A" ? "B" : "A"].voiceId;
+        const next = await topPick({ style: request.style, lang, speaker }, ttsModel, [other], headers).catch(() => null);
+        if (!next) continue;
+        const o = structuredClone(current.voiceOverrides);
+        ((o[request.style] ??= {})[lang] ??= {})[speaker] = next;
+        saveVoices({ voiceOverrides: o }, { kind: "picked", style: request.style, lang, speaker, to: next.name });
+      }
+  }
   // A key that can't make speech fails here, before the model is paid to read and write.
   if (!trial && settings.keys.elevenlabsKey) await postJSON("/api/tts", { probe: true }, headers, signal);
   await saveSource(sourceId, input.source);
@@ -208,7 +224,7 @@ export async function generateEpisodes(input: GenerateInput): Promise<Episode[]>
     const playing = live && li === 0;
     const minutes = chapterMinutes(request.minutes);
     const n = minutes.length;
-    const cpm = harness.script.charsPerMinute[lang];
+    const cpm = charsPerMinute(harness, lang);
     const id = newId("ep");
     const meta = { title: input.source.name, show_notes: [] as string[], written: 0 };
     const lines: ScriptLine[] = [];
@@ -521,7 +537,7 @@ const mine = (changes: VoiceChange[], lang: Lang) => changes.filter((c) => c.kin
 /** A seat on a free plan with only the style's library default to speak with. */
 export function libraryOnly(style: EpisodeRequest["style"], lang: Lang, s: Settings): boolean {
   const v = seatVoices(s, style, lang);
-  return (["A", "B"] as Speaker[]).some((sp) => v[sp].voiceId === STYLES[style].voices[lang][sp].voiceId);
+  return (["A", "B"] as Speaker[]).some((sp) => v[sp].voiceId === defaultVoice(style, lang, sp).voiceId);
 }
 
 /** The seats a "voice not found" names; when it names none, the ones still on a default voice, else both. */

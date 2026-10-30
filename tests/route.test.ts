@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { atTier, claudeFamily } from "../lib/llm/route";
+import { atTier, claudeFamily, GATEWAY, modelName, stageModels } from "../lib/llm/route";
 import { llmUsd } from "../lib/harness/cost";
 import { GATEWAY_URL } from "../lib/server/trial";
 import type { LLMConfig } from "../lib/llm";
@@ -42,4 +42,12 @@ test("cache reads and writes are priced at their own rates", () => {
   assert.ok(Math.abs(llmUsd("claude-sonnet-5-5", 1_000_000, 0, 1_000_000) - 0.2) < 1e-9);
   assert.ok(Math.abs(llmUsd("claude-opus-5-5", 1_000_000, 0, 1_000_000) - 0.2) < 1e-9);
   assert.ok(Math.abs(llmUsd("claude-sonnet-5-5", 1_000_000, 0, 0, undefined, 1_000_000) - 2.5) < 1e-9);
+});
+
+test("Settings names each stage's model", () => {
+  assert.equal(GATEWAY, GATEWAY_URL);
+  assert.deepEqual(stageModels("claude-opus-5-5"), { read: "Opus 5.5", write: "Sonnet 5.5", check: "Haiku 5.5" });
+  assert.deepEqual(stageModels("anthropic/claude-opus-5.5", true), { read: "Opus 5.5", write: "Sonnet 5.5", check: "Haiku 5.5" });
+  assert.equal(modelName("claude-fable-5-1"), "Fable 5.1");
+  assert.equal(modelName("deepseek-chat"), "deepseek-chat");
 });

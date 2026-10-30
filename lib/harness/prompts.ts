@@ -5,6 +5,7 @@ import { STYLES } from "./styles";
 import { lensAngles } from "./lenses";
 import { ALLOWED_TAGS } from "../tts/tags";
 import { TTS_MODEL_INFO } from "../tts/models";
+import { charsPerMinute, dense, LANG_INFO, maxTurnChars, uiOf } from "./langs";
 
 // Prompts are split into a stable `system` part (cache-friendly) and a volatile `user` part.
 
@@ -52,7 +53,28 @@ const LANG_RULES: Record<Lang, string[]> = {
     "Natural spoken American English; contractions are good; avoid written-style constructions.",
     "Spell out symbols the ear can't see (say 'percent', not '%', when it reads better).",
   ],
+  ja: [
+    "Natural spoken Japanese, as two people really talking: polite です/ます with warmth, not stiff written style or translationese.",
+    "Established English technical terms may stay in English or katakana; gloss each in Japanese the first time.",
+    "Numbers in Arabic numerals with Japanese units (26.1%、4.5倍) so speech synthesis reads them right.",
+  ],
+  ko: [
+    "Natural spoken Korean (polite 해요체 between the hosts), not written style or translationese.",
+    "Established English technical terms may stay in English; gloss each in Korean the first time.",
+    "Numbers in Arabic numerals with Korean units so speech synthesis reads them right.",
+  ],
+  es: ["Natural spoken Spanish, neutral and widely understood; avoid translated-from-English constructions.", "Keep established English technical terms when Spanish speakers use them, glossed the first time."],
+  fr: ["Natural spoken French; avoid anglicisms when a common French word exists, and translated-from-English constructions.", "Spell out symbols the ear can't see ('pour cent')."],
+  de: ["Natural spoken German, in short spoken sentences rather than long nested written ones.", "Keep established English technical terms when German speakers use them, glossed the first time."],
+  pt: ["Natural spoken Brazilian Portuguese; avoid translated-from-English constructions.", "Keep established English technical terms when they are used in Portuguese, glossed the first time."],
+  it: ["Natural spoken Italian; avoid translated-from-English constructions.", "Keep established English technical terms when Italians use them, glossed the first time."],
+  ru: ["Natural spoken Russian; short spoken sentences, no bureaucratic written style.", "Keep established English technical terms when Russian speakers use them, glossed the first time."],
+  ar: ["Modern Standard Arabic as spoken on a good podcast: clear and natural, not stiff written style.", "Keep established English technical terms when needed, glossed in Arabic the first time. Numbers in Western Arabic numerals."],
+  hi: ["Natural spoken Hindi as on a good tech podcast; common English technical words in Latin script or Devanagari are fine (natural Hinglish for terms), glossed the first time.", "Numbers in Arabic numerals."],
 };
+
+/** The language line of a prompt: its name in English, and in its own words. */
+const langLine = (lang: Lang) => (lang === "zh" ? "Chinese (Mandarin, simplified)" : lang === "en" ? "English" : `${LANG_INFO[lang].name.en} (${LANG_INFO[lang].native})`);
 
 export function tagsEnabled(h: Harness): boolean {
   return TTS_MODEL_INFO[h.pipeline.ttsModel].tags && h.script.audioTags !== "none";
@@ -65,7 +87,7 @@ function audioTagRule(h: Harness): string {
 }
 
 export function targetChars(h: Harness, lang: Lang, minutes: number): number {
-  return Math.round(h.script.charsPerMinute[lang] * minutes);
+  return Math.round(charsPerMinute(h, lang) * minutes);
 }
 
 export function scriptSystem(h: Harness, req: EpisodeRequest, listenerNotes: string[], chaptered = false): string {
@@ -93,14 +115,14 @@ Takeaways format: ${p.takeawayFormat}.
 Speaker A — ${s.roles.A}
 Speaker B — ${s.roles.B}
 Tone: ${s.tone}
-${s.rules[req.lang].map((r) => `- ${r}`).join("\n")}
+${s.rules[uiOf(req.lang)].map((r) => `- ${r}`).join("\n")}
 
-## Language: ${req.lang === "zh" ? "Chinese (Mandarin, simplified)" : "English"}
+## Language: ${langLine(req.lang)}
 ${LANG_RULES[req.lang].map((r) => `- ${r}`).join("\n")}
 
 ## Length budget
 ${chaptered ? `- The whole episode ≈ ${target} characters (≈ ${req.minutes} min); each chapter has its own target, given with the request. Stay within ±15% of it.` : `- Total spoken text ≈ ${target} characters (≈ ${req.minutes} min). Stay within ±15%.`}
-- At most ${h.script.maxTurnChars[req.lang]} characters per turn; vary turn length.
+- At most ${maxTurnChars(h, req.lang)} characters per turn; vary turn length.
 - At most ${reactions} very short reaction turns in the whole ${chaptered ? "episode" : "script"}.
 - The first ${h.script.hookLines} line(s) must deliver the hook.
 
@@ -137,7 +159,7 @@ function figuresBlock(figures: FigureRef[]): string {
   return figures.length ? `<figures>\n${figures.map((f) => `[${f.n}] ${f.label}: ${f.caption}`).join("\n")}\n</figures>\n\n` : "";
 }
 
-const chars = (h: Harness, lang: Lang, minutes: number) => Math.round(h.script.charsPerMinute[lang] * minutes);
+const chars = (h: Harness, lang: Lang, minutes: number) => Math.round(charsPerMinute(h, lang) * minutes);
 
 /** A request in parts: `prefix` is shared word for word by the calls that write one episode, so it is cached. */
 export interface Prompt {
@@ -360,12 +382,12 @@ Speaker B — ${s.roles.B}
 Tone: ${s.tone}
 Listener: ${p.label.en}. ${p.wants}
 
-## Language: ${req.lang === "zh" ? "Chinese (Mandarin, simplified)" : "English"}, whatever language the question is in
+## Language: ${langLine(req.lang)}, whatever language the question is in
 ${LANG_RULES[req.lang].map((r) => `- ${r}`).join("\n")}
 
 ## Rules
 - Answer from the source (and the brief) only. When it doesn't say, say so in one sentence, then give what it does say that comes closest. Never guess numbers.
-- 2–4 short turns, about ${req.lang === "zh" ? "120–220 characters" : "60–120 words"} in all: A answers the question directly in the first sentence; B adds one concrete detail, number or caveat from the source, and where it is in the source when that helps ("in the results table", "section 3").
+- 2–4 short turns, about ${dense(req.lang) ? "120–220 characters" : "60–120 words"} in all: A answers the question directly in the first sentence; B adds one concrete detail, number or caveat from the source, and where it is in the source when that helps ("in the results table", "section 3").
 - Spoken style for the ear: no lists, no markdown, no URLs, no citations in brackets. No square-bracket tags.
 - At most one short acknowledgement of the question, then the answer.
 - The last turn ends with a brief handback to the episode, a few words.

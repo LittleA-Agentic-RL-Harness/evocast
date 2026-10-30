@@ -1,4 +1,4 @@
-import type { ClientKeys, Episode, Lang, Mode } from "../types";
+import type { ClientKeys, Episode, Mode, UiLang } from "../types";
 import { diffHarness, type Harness } from "./genome";
 import { checkRules, passRate } from "./tests";
 
@@ -175,13 +175,13 @@ export function metricsKey(p: { scope: string; model: string; notes: string[][];
 
 // ------------------------------------------------------------------ one quiet line
 
-type Phrase = Record<Lang, string>;
+type Phrase = Record<UiLang, string>;
 
 /**
  * What changed between two harnesses, in a few plain words ("tighter turns, ~1 min shorter"),
  * from diffHarness; falls back to the plan title in the child's changelog.
  */
-export function describeTuning(parent: Harness, child: Harness, minutes: number, max = 3): Record<Lang, string[]> {
+export function describeTuning(parent: Harness, child: Harness, minutes: number, max = 3): Record<UiLang, string[]> {
   const paths = new Set(diffHarness(parent, child).map((l) => l.match(/^[=+-] ([\w.]+):/)?.[1]).filter(Boolean));
   const out: Phrase[] = [];
   const dir = (a: number, b: number) => Math.sign(b - a);

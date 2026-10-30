@@ -1,4 +1,4 @@
-import type { Lang, PersonaId } from "../types";
+import type { PersonaId, UiLang } from "../types";
 
 /**
  * What the hub learns about one listener from a few taps (personal matching).
@@ -18,7 +18,7 @@ export const EMPTY_PROFILE: ListenerProfile = { notes: [], minutesBias: {} };
 
 export interface Chip {
   id: string;
-  label: Record<Lang, string>;
+  label: Record<UiLang, string>;
   sentiment: -1 | 1;
   /** Preference note added to the profile (scoped to the persona) when tapped. */
   note?: string;

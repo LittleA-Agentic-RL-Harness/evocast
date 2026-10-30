@@ -2,6 +2,7 @@ import type { EpisodeRequest, Script, TestCase, TestResult } from "../types";
 import { SEEDS, type Harness } from "./genome";
 import { PERSONAS } from "./personas";
 import { tagsEnabled, targetChars } from "./prompts";
+import { maxTurnChars } from "./langs";
 import { ALLOWED_TAGS, findTags, stripTags } from "../tts/tags";
 
 /**
@@ -40,7 +41,7 @@ export function checkRules(script: Script, req: EpisodeRequest, h: Harness): Tes
   const spoken = script.lines.map((l) => stripTags(l.text));
   const total = spoken.reduce((n, t) => n + t.length, 0);
   const target = targetChars(BAR, req.lang, req.minutes);
-  const maxTurn = BAR.script.maxTurnChars[req.lang] * 1.5;
+  const maxTurn = maxTurnChars(BAR, req.lang) * 1.5;
   const aChars = script.lines.filter((l) => l.speaker === "A").reduce((n, l) => n + stripTags(l.text).length, 0);
   const share = total ? aChars / total : 0;
   const fillers = spoken.filter((t) => FILLER.test(t.trim())).length;

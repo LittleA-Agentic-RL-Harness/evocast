@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "./context";
 import { Button, Dialog, Disclosure, Segmented, Toggle } from "../ui/kit";
 import { Check, Key, Play, Pause, Sparkles } from "../ui/icons";
-import type { Lang, Speaker, StyleId } from "@/lib/types";
+import type { Lang, Speaker, StyleId, UiLang } from "@/lib/types";
 import { STYLES, STYLE_IDS, type VoiceSlot } from "@/lib/harness/styles";
 import { modelInfo } from "@/lib/tts/models";
+import { claudeFamily, stageModels } from "@/lib/llm/route";
 import { ApiError, getJSON, getTrial, keyHeaders, keyMessage, postJSON } from "@/lib/client/api";
 import { downloadBlob, freePlan, getSting, libraryOnly, seatRole, seatVoices } from "@/lib/client/pipeline";
 import { DEFAULT_SETTINGS, idb, type Settings } from "@/lib/client/store";
@@ -22,6 +23,37 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
       </div>
       {children}
     </section>
+  );
+}
+
+/**
+ * Which model does what: reading stays on the chosen model, writing and checking step down to
+ * lighter Claude models (lib/llm/route.ts). Own Claude keys can keep one model for everything.
+ */
+function Stages() {
+  const { T, settings, update } = useApp();
+  const k = settings.keys;
+  const trial = k.llmProvider === "hosted";
+  const own = k.llmProvider === "anthropic" && Boolean(k.llmKey) && !k.llmBaseUrl;
+  const model = trial ? "anthropic/claude-opus-5.5" : (k.llmModel ?? "claude-opus-5-5");
+  if (!(trial || own) || !claudeFamily(model)) return null;
+  const on = k.route !== false;
+  const m = stageModels(model, trial);
+  return (
+    <div className="list-row">
+      <span style={{ width: 18 }} />
+      <div className="grow">
+        <div className="caption">
+          {on && m.write !== m.read
+            ? T(
+                `读原文 ${m.read} · 写稿 ${m.write} · 开场、校验、问答 ${m.check}；精品档写稿用 ${m.read}、校验用 ${m.write}`,
+                `Reading ${m.read} · writing ${m.write} · opening, checks, answers ${m.check}. Heavy mode writes with ${m.read} and checks with ${m.write}.`,
+              )
+            : T(`每一步都用 ${m.read}`, `${m.read} for every step`)}
+        </div>
+      </div>
+      {own && <Toggle on={on} onChange={(v) => update({ ...settings, keys: { ...k, route: v } })} label={T("按步骤选模型", "A model per step")} />}
+    </div>
   );
 }
 
@@ -67,6 +99,7 @@ export default function SettingsView() {
             {k.llmKey && k.llmProvider !== "mock" && !trial && <span className="badge good"><Check size={11} /> {T("已连接", "Connected")}</span>}
             {trial && <span className="badge accent">{T("试用", "Trial")}</span>}
           </div>
+          <Stages />
           <div className="list-row">
             <Key size={18} style={{ color: "var(--label-3)" }} />
             <div className="grow">
@@ -107,7 +140,7 @@ export default function SettingsView() {
           </div>
           <div className="list-row">
             <span className="grow">{T("语言", "Language")}</span>
-            <Segmented value={settings.uiLang} onChange={(l: Lang) => update({ ...settings, uiLang: l })} options={[{ value: "zh", label: "中文" }, { value: "en", label: "English" }]} />
+            <Segmented value={settings.uiLang} onChange={(l: UiLang) => update({ ...settings, uiLang: l })} options={[{ value: "zh", label: "中文" }, { value: "en", label: "English" }]} />
           </div>
           <div className="list-row">
             <div className="grow">

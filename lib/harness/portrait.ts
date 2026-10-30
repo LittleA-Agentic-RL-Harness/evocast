@@ -1,4 +1,4 @@
-import type { Episode, Lang, PersonaId } from "../types";
+import type { Episode, PersonaId, UiLang } from "../types";
 import type { Session } from "./ui";
 import type { ListenerProfile } from "./profile";
 import { PERSONAS } from "./personas";
@@ -14,8 +14,8 @@ export const FILLED = 0.35;
 
 export interface Piece {
   key: "role" | "language" | "length" | "voice" | "topics" | "depth" | "pace" | "ritual" | "taste";
-  label: Record<Lang, string>;
-  value: Record<Lang, string>;
+  label: Record<UiLang, string>;
+  value: Record<UiLang, string>;
   /** 0..1; below FILLED the piece renders as an empty outline. */
   confidence: number;
   evidence: number;
@@ -56,13 +56,13 @@ export function buildPortrait(episodes: Episode[], sessions: Session[], profile:
   const listened = episodes.filter((e) => (e.feedback?.listenedPct ?? 0) > 0);
   const completion = listened.length ? listened.reduce((a, e) => a + e.feedback!.listenedPct, 0) / listened.length : 0;
 
-  const RITUAL: Record<string, Record<Lang, string>> = {
+  const RITUAL: Record<string, Record<UiLang, string>> = {
     night: { zh: "深夜研读", en: "Late-night reader" },
     morning: { zh: "晨间充电", en: "Morning briefings" },
     afternoon: { zh: "午后消化", en: "Afternoon digests" },
     evening: { zh: "晚间复盘", en: "Evening wind-down" },
   };
-  const langLabel = (k: string | null): Record<Lang, string> =>
+  const langLabel = (k: string | null): Record<UiLang, string> =>
     k === "en" ? { zh: "英文", en: "English" } : k === "zh" ? { zh: "中文", en: "Chinese" } : k ? { zh: "中英双语", en: "Bilingual" } : empty;
 
   return [

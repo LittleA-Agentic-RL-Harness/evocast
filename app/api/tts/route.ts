@@ -3,6 +3,7 @@ import { gatewaySpeechPrice, gatewaySpeechTimed } from "@/lib/tts/gateway";
 import { modelInfo } from "@/lib/tts/models";
 import { silentMp3 } from "@/lib/tts/mp3";
 import { ttsUsd } from "@/lib/harness/cost";
+import { dense } from "@/lib/harness/langs";
 import { errorResponse, isTrial, resolveElevenKey, resolveTrialSpeech } from "@/lib/server/keys";
 import type { Lang, ScriptLine, Speaker } from "@/lib/types";
 
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
     } else {
       const key = resolveElevenKey(req);
       if (!key && req.headers.get("x-llm-provider") === "mock") {
-        const seconds = chars / (body.lang === "zh" ? 4.2 : 14);
+        const seconds = chars / (dense(body.lang) ? 4.2 : 14);
         out = { audio: silentMp3(seconds), starts: fillStarts(inputs.map(() => NaN), inputs, seconds) };
       } else if (info.dialogue) {
         out = await textToDialogueTimed(key ?? "", inputs, body.model, body.lang, body.context);

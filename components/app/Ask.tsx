@@ -254,12 +254,12 @@ export function AskBlock({ ask, names, live }: { ask: Ask; names: Record<"A" | "
     <div className="t-ask" data-ask>
       <div className="t-line t-q">
         <span className="t-who">{T("你问", "You")}</span>
-        <span>{ask.question}</span>
+        <span dir="auto">{ask.question}</span>
       </div>
       {ask.lines.map((l, i) => (
         <div key={i} className={`t-line ${live && i === ask.lines.length - 1 ? "t-now" : "past"}`}>
           <span className="t-who">{names[l.speaker]}</span>
-          <span>{stripTags(l.text)}</span>
+          <span dir="auto">{stripTags(l.text)}</span>
         </div>
       ))}
       {live && !ask.lines.length && (

@@ -10,6 +10,7 @@ export function keyHeaders(k: ClientKeys, price?: { input: number; output: numbe
   if (k.llmModel) h["x-llm-model"] = k.llmModel;
   if (k.elevenlabsKey) h["x-el-key"] = k.elevenlabsKey;
   if (k.passcode) h["x-app-passcode"] = k.passcode;
+  if (k.route === false) h["x-llm-route"] = "off";
   if (price) h["x-llm-price"] = JSON.stringify(price);
   return h;
 }

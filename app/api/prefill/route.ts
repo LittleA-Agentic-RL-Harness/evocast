@@ -4,7 +4,7 @@ import { atTier } from "@/lib/llm/route";
 import { coerceRecipe, RecipeWireSchema, UIGenomeSchema, type Recipe } from "@/lib/harness/ui";
 import { heuristicRecipe, prefillSystem, prefillUser } from "@/lib/harness/prefill";
 import { errorResponse, resolveLLM } from "@/lib/server/keys";
-import type { Lang } from "@/lib/types";
+import type { UiLang } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -14,7 +14,7 @@ const PrefillSchema = z.object({ recipe: RecipeWireSchema, reason: z.string() })
 /** Content-aware prefill of the create form, steered by the interface harness's rules. */
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as { head: string; title: string; portrait: string; recent: Recipe[]; ui: unknown; habit: Recipe; uiLang: Lang };
+    const body = (await req.json()) as { head: string; title: string; portrait: string; recent: Recipe[]; ui: unknown; habit: Recipe; uiLang: UiLang };
     const g = UIGenomeSchema.parse(body.ui);
     const fallback = heuristicRecipe(body.head, body.habit);
     const r = await callJSON(atTier(resolveLLM(req), "small"), {

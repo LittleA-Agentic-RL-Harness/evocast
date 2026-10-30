@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Episode, Lang } from "../types";
+import type { Episode, UiLang } from "../types";
 
 /**
  * The research atlas ("我的学术星图"): every source this person has turned into an episode,
@@ -47,7 +47,7 @@ export interface AtlasBridge {
   why: string;
 }
 export interface Atlas {
-  lang: Lang;
+  lang: UiLang;
   identity: string;
   summary: string;
   fields: AtlasField[];
@@ -130,12 +130,12 @@ Return:
 Use only what the papers show. Field ids are short lowercase slugs.`;
 }
 
-export function atlasUser(entries: AtlasEntry[], uiLang: Lang): string {
+export function atlasUser(entries: AtlasEntry[], uiLang: UiLang): string {
   return `Interface language: ${uiLang === "zh" ? "Chinese" : "English"}\n\n<papers>\n${entries.map((e) => JSON.stringify(e)).join("\n")}\n</papers>`;
 }
 
 /** The model's map, held to the papers it was given: unknown ids and empty fields dropped, every paper placed. */
-export function fromWire(w: AtlasWire, papers: Paper[], lang: Lang): Atlas {
+export function fromWire(w: AtlasWire, papers: Paper[], lang: UiLang): Atlas {
   const ids = new Set(papers.map((p) => p.id));
   const fallback = rulesAtlas(papers, lang);
   const placed = w.papers.filter((p) => ids.has(p.id)).map((p) => ({ id: p.id, fields: p.fields.slice(0, 2), concepts: [...new Set(p.concepts.map((c) => c.trim()).filter(Boolean))].slice(0, 4) }));
@@ -182,7 +182,7 @@ const RULES: [DomainId, RegExp][] = [
 ];
 
 /** Without a model: realms by keywords, one field per realm, concepts from each brief's glossary. */
-export function rulesAtlas(papers: Paper[], lang: Lang): Atlas {
+export function rulesAtlas(papers: Paper[], lang: UiLang): Atlas {
   const placed: AtlasPaper[] = papers.map((p) => {
     const text = `${p.title} ${p.oneLiner} ${p.terms.join(" ")}`;
     const hits = RULES.filter(([, re]) => re.test(text)).map(([d]) => d);
@@ -363,7 +363,7 @@ export interface Badge {
   id: string;
   zh: string;
   en: string;
-  hint: Record<Lang, string>;
+  hint: Record<UiLang, string>;
   got: boolean;
 }
 
